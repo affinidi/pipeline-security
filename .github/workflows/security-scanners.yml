@@ -1,0 +1,29 @@
+on:
+  workflow_call:
+    inputs:
+      config-path: 
+        required: true
+        type: string
+    secrets: inherit
+      
+jobs:
+# secret detection security scanner
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: gitleaks-action
+        uses: zricethezav/gitleaks-action@v1.6.0
+
+  # semgrep dependency scanner 
+  semgrep:
+    name: dependency-scan
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    if: (github.actor != 'dependabot[bot]')
+    steps:
+      - uses: actions/checkout@v3
+      - run: semgrep ci
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
