@@ -8,8 +8,6 @@ on:
     secrets:
       SONAR_TOKEN:
         required: true
-      SEMGREP_APP_TOKEN:
-        required: true
       
 jobs:
 # secret detection security scanner
@@ -19,19 +17,6 @@ jobs:
       - uses: actions/checkout@v3
       - name: gitleaks-action
         uses: zricethezav/gitleaks-action@v1.6.0
-
-  # semgrep dependency scanner 
-  semgrep:
-    name: dependency-scan
-    runs-on: ubuntu-latest
-    container:
-      image: returntocorp/semgrep
-    if: (github.actor != 'dependabot[bot]')
-    steps:
-      - uses: actions/checkout@v3
-      - run: semgrep ci
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
           
   # sonarcloud sast scanner
   sonarcloud:
