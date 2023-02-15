@@ -1,10 +1,19 @@
 on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_call:
     inputs:
       config-path: 
         required: true
         type: string
-    secrets: inherit
+    secrets:
+      SONAR_TOKEN:
+        required: true
+      SEMGREP_APP_TOKEN:
+        required: true
       
 jobs:
 # secret detection security scanner
@@ -27,3 +36,17 @@ jobs:
       - run: semgrep ci
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+          
+  # sonarcloud sast scanner
+  sonarcloud:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0  
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
