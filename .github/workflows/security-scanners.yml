@@ -8,8 +8,8 @@ on:
       - submitted
   workflow_call:
     secrets:
-      SONAR_TOKEN:
-        required: false
+      SEMGREP_APP_TOKEN:
+        required: true
   schedule:
     - cron: '00 10 * * *'
     
