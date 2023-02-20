@@ -8,7 +8,10 @@ on:
     secrets:
       SONAR_TOKEN:
         required: false
-      
+
+permissions:
+  contents: read
+
 jobs:
 # secret detection security scanner
   gitleaks:
