@@ -13,7 +13,9 @@ on:
     
 permissions:
   contents: read
-
+  security-events: write
+  actions: read
+  
 jobs:
 # secret detection security scanner
   gitleaks:
