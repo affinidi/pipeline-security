@@ -1,11 +1,4 @@
 on:
-  push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
-  pull_request_review:
-    types:
-      - submitted
   workflow_call:
     secrets:
       SEMGREP_APP_TOKEN:
