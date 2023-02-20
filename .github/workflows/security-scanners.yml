@@ -1,9 +1,8 @@
 on:
   push:
-    branches:
-      - master
+    branches: [ "master" ]
   pull_request:
-    types: [opened, synchronize, reopened]
+    branches: [ "master" ]
   pull_request_review:
     types:
       - submitted
