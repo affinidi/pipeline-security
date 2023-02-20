@@ -55,5 +55,4 @@ jobs:
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: semgrep.sarif
-        if: always()@v3
-      - run: semgrep ci
+        if: always()
