@@ -51,6 +51,7 @@ jobs:
           sarif_file: semgrep.sarif
         if: always()
 
+# dependency scanning
   dependency-review:
       runs-on: ubuntu-latest
       steps:
