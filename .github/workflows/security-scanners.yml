@@ -8,7 +8,9 @@ on:
     secrets:
       SONAR_TOKEN:
         required: false
-
+  schedule:
+    - cron: '00 10 * * *'
+    
 permissions:
   contents: read
 
