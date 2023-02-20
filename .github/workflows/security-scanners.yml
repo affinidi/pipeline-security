@@ -4,6 +4,9 @@ on:
       - master
   pull_request:
     types: [opened, synchronize, reopened]
+  pull_request_review:
+    types:
+      - submitted
   workflow_call:
     secrets:
       SONAR_TOKEN:
