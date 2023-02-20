@@ -20,7 +20,7 @@ jobs:
           
   # sonarcloud sast scanner
   sonarcloud:
-    name: SonarCloud
+    name: sonarcloud
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -31,3 +31,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  semgrep:
+    name: semgrep
+    runs-on: ubuntu-20.04
+    env:
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+    container:
+      image: returntocorp/semgrep
+    if: (github.actor != 'dependabot[bot]')
+    steps:
+      - uses: actions/checkout@v3
+      - run: semgrep ci
