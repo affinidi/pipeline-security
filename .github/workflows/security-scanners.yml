@@ -5,8 +5,6 @@ on:
         required: true
       GITLEAKS_LICENSE:
         required: true
-      GITHUB_TOKEN:
-        required: true
 
   schedule:
     - cron: '00 10 * * *'
