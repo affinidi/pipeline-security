@@ -13,4 +13,4 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: gitleaks-action
-        uses: zricethezav/gitleaks-action@v1.6.0
+        uses: zricethezav/gitleaks-action@latest
