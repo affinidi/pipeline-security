@@ -4,7 +4,6 @@ on:
       config-path: 
         required: true
         type: string
-    secrets: inherit
       
 jobs:
 # secret detection security scanner
