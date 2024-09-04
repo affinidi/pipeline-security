@@ -8,8 +8,10 @@ on:
 jobs:
 # secret detection security scanner
   gitleaks:
+    name: gitleaks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: gitleaks-action
-        uses: zricethezav/gitleaks-action@latest
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
