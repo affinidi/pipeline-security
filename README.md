@@ -17,3 +17,24 @@ In your repo, ensure that you add the following code snippet to call the securit
     secrets: inherit    
 
  ````
+ For enabling wizcli-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+ ````
+  name: on-push
+
+  on:
+  # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
+  # also run on  branch main
+  push:
+    branches:
+      - main
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+
+  jobs:
+    call-workflow:
+      uses: affinidi/pipeline-security/.github/workflows/wizcli-dirscan.yml@main
+      secrets: inherit
+
+ ````
