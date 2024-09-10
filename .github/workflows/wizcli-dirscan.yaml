@@ -1,5 +1,5 @@
 name: 'wiz-cli'
-on: [pull_request]
+on: [workflow_call]
 
 jobs:
   wiz-cli-dir-scan:
