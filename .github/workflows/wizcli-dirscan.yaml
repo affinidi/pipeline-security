@@ -18,6 +18,9 @@ jobs:
     # Checkout the repository to the GitHub Actions runner
     - name: Check out repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: ${{ github.head_ref }}
 
     - name: Download Wiz CLI
       run: curl -o wizcli https://downloads.wiz.io/wizcli/latest/wizcli-linux-amd64 && chmod +x wizcli
