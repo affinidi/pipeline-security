@@ -11,4 +11,16 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: gitleaks-action
-        uses: zricethezav/gitleaks-action@v1.6.0
+        uses: zricethezav/gitleaks-action@v2.3.9
+
+  dart-scan:
+    runs-on: ubuntu-latest
+    needs: gitleaks
+    steps:
+      - uses: actions/checkout@v3
+      - name: 🔍 Flutter / Dart Scanner
+        uses: affinidi/dart-pipeline-scanner/.github/actions/dart-scan@main
+        with:
+          repo-path: '${{ inputs.config-path }}'
+          DART_SCANNER_TOKEN: ${{ secrets.DART_SCANNER_TOKEN }}
+          DART_SCANNER_REGION: ${{ secrets.DART_SCANNER_REGION }}
