@@ -41,6 +41,9 @@ In your repo, ensure that you add the following code snippet to call the securit
   ````
   For enabling dart-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
   ```
+  # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
+  # also run on  branch main
+  
   name: Dart Scanner
 
   on:
@@ -59,6 +62,6 @@ In your repo, ensure that you add the following code snippet to call the securit
   ```
 
   Ensure the following secrets are available in your repo:
-  
+
   - DART_SCANNER_TOKEN
   - DART_SCANNER_REGION
