@@ -22,6 +22,7 @@ on:
 
 jobs:
   dart-scan:
+    name: Dart Security Scanner
     runs-on: ubuntu-latest
     steps:
       - name: 🧾 Checkout code
