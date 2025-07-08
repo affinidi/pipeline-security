@@ -143,7 +143,9 @@ jobs:
           elif [[ "$unknown" -gt 0 ]]; then
             echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
           else
+            echo ""
             echo "✅ No Critical (🟣) or High (🔴) vulnerabilities found. Great job! 🎉"
+            echo ""
           fi
 
       - name: 🧹 Cleanup
