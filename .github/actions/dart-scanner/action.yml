@@ -82,9 +82,7 @@ runs:
       run: |
         cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1
 
-        if ! snyk sbom test --experimental --file pub-sbom.json --org=my-org-slug --json > sbom-result.json 2>&1; then
-          echo "⚠️ Snyk test exited with a non-zero status, continuing to parse results..."
-        fi
+        snyk sbom test --experimental --file pub-sbom.json --org=my-org-slug --json > sbom-result.json 
 
         if jq -e 'has("error")' sbom-result.json; then
           echo "::error::Scan failed: $(jq -r '.error' sbom-result.json)"
