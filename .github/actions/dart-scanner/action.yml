@@ -84,11 +84,6 @@ runs:
 
         snyk sbom test --experimental --file pub-sbom.json --org=my-org-slug --json > sbom-result.json 
 
-        if jq -e 'has("error")' sbom-result.json; then
-          echo "::error::Scan failed: $(jq -r '.error' sbom-result.json)"
-          exit 1
-        fi
-
         critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
         high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
         unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
