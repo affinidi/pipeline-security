@@ -16,14 +16,15 @@ In your repo, ensure that you add the following code snippet to call the securit
         config-path: .github/labeler.yml
     secrets: inherit    
 
- ````
- For enabling wizcli-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
- ````
-  name: on-push
-
-  on:
+  ````
+  For enabling wizcli-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+  ````
   # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
   # also run on  branch main
+
+  name: Wiz Scanner
+
+  on:
   push:
     branches:
       - main
@@ -37,4 +38,27 @@ In your repo, ensure that you add the following code snippet to call the securit
       uses: affinidi/pipeline-security/.github/workflows/wizcli-dirscan.yml@main
       secrets: inherit
 
- ````
+  ````
+  For enabling dart-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+  ```
+  name: Dart Scanner
+
+  on:
+    push:
+      branches:
+        - main
+    pull_request:
+      types:
+        - opened
+        - synchronize
+
+  jobs:
+    dart-security-scan:
+      uses: affinidi/pipeline-security/.github/actions/dart-scanner@main
+      secrets: inherit
+  ```
+
+  Ensure the following secrets are available in your repo:
+  
+  - DART_SCANNER_TOKEN
+  - DART_SCANNER_REGION
