@@ -8,6 +8,7 @@ The following scanners have been enabled in this repo and should be called from 
 
 ## Usage
 In your repo, ensure that you add the following code snippet to call the security scanners:
+
 ````
  jobs:
   call-security-scanners-workflow:
@@ -15,10 +16,11 @@ In your repo, ensure that you add the following code snippet to call the securit
     with:
         config-path: .github/labeler.yml
     secrets: inherit    
+````
 
-  ````
-  For enabling wizcli-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
-  ````
+For enabling wizcli-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+
+````
   # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
   # also run on  branch main
 
@@ -37,10 +39,11 @@ In your repo, ensure that you add the following code snippet to call the securit
     call-workflow:
       uses: affinidi/pipeline-security/.github/workflows/wizcli-dirscan.yml@main
       secrets: inherit
+````
 
-  ````
-  For enabling dart-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
-  ```
+For enabling dart-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+
+````
   # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
   # also run on  branch main
 
@@ -57,18 +60,18 @@ In your repo, ensure that you add the following code snippet to call the securit
 
   jobs:
     dart-security-scan:
-      uses: affinidi/pipeline-security/.github/actions/dart-scanner@main
+      uses: affinidi/pipeline-security/.github/workflows/dart-scanner@main
       secrets: inherit
-  ```
+````
 
-  Ensure the following secrets are available in your repo:
+Ensure the following secrets are available in your repo:
 
-  - DART_SCANNER_TOKEN
-  - DART_SCANNER_REGION
+  - SCANNER_TOKEN
+  - SCANNER_REGION
 
-  ````
-  For enabling rust-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
-  ```
+For enabling rust-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+
+````
   # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
   # also run on  branch main
   
@@ -85,11 +88,11 @@ In your repo, ensure that you add the following code snippet to call the securit
 
   jobs:
     rust-security-scan:
-      uses: affinidi/pipeline-security/.github/actions/rust-scanner@main
+      uses: affinidi/pipeline-security/.github/workflows/rust-scanner@main
       secrets: inherit
-  ```
+````
 
-  Ensure the following secrets are available in your repo:
+Ensure the following secrets are available in your repo:
 
-  - RUST_SCANNER_TOKEN
-  - RUST_SCANNER_REGION
+  - SCANNER_TOKEN
+  - SCANNER_REGION
