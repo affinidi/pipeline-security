@@ -10,9 +10,9 @@ on:
         type: string
 
     secrets:
-      RUST_SCANNER_TOKEN:
+      SCANNER_TOKEN:
         required: true
-      RUST_SCANNER_REGION:
+      SCANNER_REGION:
         required: true
 
 jobs:
@@ -66,19 +66,19 @@ jobs:
           cargo install cargo-cyclonedx
           npm install -g snyk@latest
 
-      - name: 🔐 Authenticate with Snyk
+      - name: 🔐 Authentication
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         env:
-          RUST_SCANNER_TOKEN: ${{ secrets.RUST_SCANNER_TOKEN }}
-          RUST_SCANNER_REGION: ${{ secrets.RUST_SCANNER_REGION }}
+          SCANNER_TOKEN: ${{ secrets.SCANNER_TOKEN }}
+          SCANNER_REGION: ${{ secrets.SCANNER_REGION }}
         run: |
-          echo "::add-mask::$RUST_SCANNER_TOKEN"
-          echo "::add-mask::$RUST_SCANNER_REGION"
+          echo "::add-mask::$SCANNER_TOKEN"
+          echo "::add-mask::$SCANNER_REGION"
 
-          snyk config set endpoint="https://api.${RUST_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
-          snyk auth "$RUST_SCANNER_TOKEN" >/dev/null 2>&1
+          snyk config set endpoint="https://api.${SCANNER_REGION}.snyk.io" >/dev/null 2>&1
+          snyk auth "$SCANNER_TOKEN" >/dev/null 2>&1
 
       - name: 📦 Check and resolve dependencies
         shell: bash

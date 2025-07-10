@@ -43,7 +43,7 @@ In your repo, ensure that you add the following code snippet to call the securit
   ```
   # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
   # also run on  branch main
-  
+
   name: Dart Scanner
 
   on:
@@ -65,3 +65,31 @@ In your repo, ensure that you add the following code snippet to call the securit
 
   - DART_SCANNER_TOKEN
   - DART_SCANNER_REGION
+
+  ````
+  For enabling rust-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+  ```
+  # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
+  # also run on  branch main
+  
+  name: Rust Scanner
+
+  on:
+    push:
+      branches:
+        - main
+    pull_request:
+      types:
+        - opened
+        - synchronize
+
+  jobs:
+    rust-security-scan:
+      uses: affinidi/pipeline-security/.github/actions/rust-scanner@main
+      secrets: inherit
+  ```
+
+  Ensure the following secrets are available in your repo:
+
+  - RUST_SCANNER_TOKEN
+  - RUST_SCANNER_REGION
