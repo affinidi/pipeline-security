@@ -1,0 +1,156 @@
+name: Rust Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      repo-path:
+        description: 'Path to the repository to scan'
+        required: false
+        default: '.'
+        type: string
+
+    secrets:
+      RUST_SCANNER_TOKEN:
+        required: true
+      RUST_SCANNER_REGION:
+        required: true
+
+jobs:
+  rust-scan:
+    name: Rust Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🧾 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Detect Project Type
+        id: detect
+        shell: bash
+        run: |
+          REPO_PATH="${{ inputs.repo-path }}"
+
+          if [ ! -f "${REPO_PATH}/Cargo.toml" ]; then
+            echo "::warning::No Cargo.toml found - not a Rust project"
+            echo "is_rust=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "Project Type : Rust"
+          echo "is_rust=true" >> $GITHUB_OUTPUT
+
+          IS_LIBRARY="false"
+          IS_BINARY="false"
+
+          if grep -q '\[lib\]' "${REPO_PATH}/Cargo.toml" || [ -f "${REPO_PATH}/src/lib.rs" ]; then
+            IS_LIBRARY="true"
+          fi
+
+          if grep -q '\[\[bin\]\]' "${REPO_PATH}/Cargo.toml" || [ -f "${REPO_PATH}/src/main.rs" ]; then
+            IS_BINARY="true"
+          fi        
+
+          echo "is_library=${IS_LIBRARY}" >> $GITHUB_OUTPUT
+          echo "is_binary=${IS_BINARY}" >> $GITHUB_OUTPUT
+
+      - name: 🦀 Set up Rust Toolchain with components
+        if: steps.detect.outputs.is_rust == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: 📦 Install Rust analysis tools
+        if: steps.detect.outputs.is_rust == 'true'
+        shell: bash
+        run: |
+          cargo install cargo-audit
+          cargo install cargo-cyclonedx
+          npm install -g snyk@latest
+
+      - name: 🔐 Authenticate with Snyk
+        if: steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        shell: bash
+        env:
+          RUST_SCANNER_TOKEN: ${{ secrets.RUST_SCANNER_TOKEN }}
+          RUST_SCANNER_REGION: ${{ secrets.RUST_SCANNER_REGION }}
+        run: |
+          echo "::add-mask::$RUST_SCANNER_TOKEN"
+          echo "::add-mask::$RUST_SCANNER_REGION"
+
+          snyk config set endpoint="https://api.${RUST_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
+          snyk auth "$RUST_SCANNER_TOKEN" >/dev/null 2>&1
+
+      - name: 📦 Check and resolve dependencies
+        shell: bash
+        if: steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        run: cargo check
+
+      - name: 📊 Scan, Fail if Critical or High vulnerabilities found !!!
+        if: steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        shell: bash
+        run: |
+          cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1
+
+          snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json || true
+
+          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
+          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
+          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
+
+          echo "::group::📊 Vulnerability Summary"
+
+          jq -er '
+            if ((.vulnerabilities? // []) | length) == 0 then
+              empty
+            else
+              .vulnerabilities
+              | group_by(.severity?)[]
+              | {
+                  severity: .[0].severity,
+                  issues: [.[] | {
+                    id: .id?,
+                    title: .title?,
+                    pkg: .packageName?,
+                    version: .version?
+                  }]
+                }
+              | (
+                  if .severity == "critical" then "\n🟣 CRITICAL SEVERITY"
+                  elif .severity == "high" then "\n🔴 HIGH SEVERITY"
+                  elif .severity == "medium" then "\n🟠 MEDIUM SEVERITY"
+                  elif .severity == "low" then "\n🟡 LOW SEVERITY"
+                  else "\n⚪ UNKNOWN SEVERITY"
+                  end
+                ) + "\n" +
+                (
+                  .issues[]
+                  | "\n- \(.title) [\(.id)]\n  📦 Package: \(.pkg)@\(.version)"
+                )
+            end
+          ' sbom-result.json || echo "✅ No vulnerabilities detected, Great job! 🎉"
+
+          echo "::endgroup::"
+
+          if [[ "$critical" -gt 0 || "$high" -gt 0 ]]; then
+            echo "::error::❌ Scan failed due to high-severity issues:"
+            echo "  🟣 Critical vulnerabilities: $critical"
+            echo "  🔴 High vulnerabilities: $high"
+            exit 1
+          elif [[ "$unknown" -gt 0 ]]; then
+            echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
+          else
+            echo "✅ No Critical (🟣) or High (🔴) vulnerabilities found. Great job! 🎉"
+          fi
+
+      - name: 🧹 Cleanup
+        shell: bash
+        if: always() && steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        run: rm -f pub-sbom.json sbom-result.json
+
+      - name: ℹ️ Skip if not a Rust project
+        shell: bash
+        if: steps.detect.outputs.is_rust != 'true'
+        run: echo "🟡 Skipping scan - not a Rust project"
