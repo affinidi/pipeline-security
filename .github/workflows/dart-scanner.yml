@@ -95,7 +95,7 @@ jobs:
         run: |
           cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1
 
-          snyk sbom test --experimental --file pub-sbom.json --org=my-org-slug --json > sbom-result.json
+          snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json
 
           critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
           high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
