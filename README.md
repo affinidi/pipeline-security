@@ -66,8 +66,8 @@ For enabling dart-scanner, add the following code snippet to .github/workflows/o
 
 Ensure the following secrets are available in your repo:
 
-  - SCANNER_TOKEN
-  - SCANNER_REGION
+  - SNYK_SCANNER_TOKEN
+  - SNYK_SCANNER_REGION
 
 For enabling rust-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
 
@@ -94,5 +94,5 @@ For enabling rust-scanner, add the following code snippet to .github/workflows/o
 
 Ensure the following secrets are available in your repo:
 
-  - SCANNER_TOKEN
-  - SCANNER_REGION
+  - SNYK_SCANNER_TOKEN
+  - SNYK_SCANNER_REGION

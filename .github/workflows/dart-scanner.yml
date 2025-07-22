@@ -15,9 +15,9 @@ on:
         type: string
 
     secrets:
-      DART_SCANNER_TOKEN:
+      SNYK_SCANNER_TOKEN:
         required: true
-      DART_SCANNER_REGION:
+      SNYK_SCANNER_REGION:
         required: true
 
 jobs:
@@ -69,14 +69,14 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         env:
-          DART_SCANNER_TOKEN: ${{ secrets.DART_SCANNER_TOKEN }}
-          DART_SCANNER_REGION: ${{ secrets.DART_SCANNER_REGION }}
+          SNYK_SCANNER_TOKEN: ${{ secrets.SNYK_SCANNER_TOKEN }}
+          SNYK_SCANNER_REGION: ${{ secrets.SNYK_SCANNER_REGION }}
         run: |
-          echo "::add-mask::$DART_SCANNER_TOKEN"
-          echo "::add-mask::$DART_SCANNER_REGION"
+          echo "::add-mask::$SNYK_SCANNER_TOKEN"
+          echo "::add-mask::$SNYK_SCANNER_REGION"
 
-          snyk config set endpoint="https://api.${DART_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
-          snyk auth "$DART_SCANNER_TOKEN" >/dev/null 2>&1
+          snyk config set endpoint="https://api.${SNYK_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
+          snyk auth "$SNYK_SCANNER_TOKEN" >/dev/null 2>&1
 
       - name: 📦 Resolve dependencies
         if: steps.detect.outputs.is_dart == 'true'
