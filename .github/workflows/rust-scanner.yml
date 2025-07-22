@@ -1,4 +1,4 @@
-name: Dart/Flutter Security Scan
+name: Rust Security Scan
 
 on:
   workflow_call:
@@ -8,11 +8,6 @@ on:
         required: false
         default: '.'
         type: string
-      flutter-version:
-        description: 'Flutter SDK version'
-        required: false
-        default: 'stable'
-        type: string
 
     secrets:
       SNYK_SCANNER_TOKEN:
@@ -21,8 +16,8 @@ on:
         required: true
 
 jobs:
-  dart-scan:
-    name: Dart Security Scanner
+  rust-scan:
+    name: Rust Security Scan
     runs-on: ubuntu-latest
     steps:
       - name: 🧾 Checkout code
@@ -34,38 +29,45 @@ jobs:
         run: |
           REPO_PATH="${{ inputs.repo-path }}"
 
-          if [ ! -f "${REPO_PATH}/pubspec.yaml" ]; then
-            echo "::warning::No pubspec.yaml found - not a Dart/Flutter project"
-            echo "is_dart=false" >> $GITHUB_OUTPUT
+          if [ ! -f "${REPO_PATH}/Cargo.toml" ]; then
+            echo "::warning::No Cargo.toml found - not a Rust project"
+            echo "is_rust=false" >> $GITHUB_OUTPUT
             exit 0
           fi
+          echo "Project Type : Rust"
+          echo "is_rust=true" >> $GITHUB_OUTPUT
 
-          if grep -q "sdk: flutter" "${REPO_PATH}/pubspec.yaml" || grep -q "flutter:" "${REPO_PATH}/pubspec.yaml"; then
-            echo "Project Type : Flutter"
-            echo "is_flutter=true" >> $GITHUB_OUTPUT
-            echo "is_dart=true" >> $GITHUB_OUTPUT
-          else
-            echo "Project Type : Dart"
-            echo "is_flutter=false" >> $GITHUB_OUTPUT
-            echo "is_dart=true" >> $GITHUB_OUTPUT
+          IS_LIBRARY="false"
+          IS_BINARY="false"
+
+          if grep -q '\[lib\]' "${REPO_PATH}/Cargo.toml" || [ -f "${REPO_PATH}/src/lib.rs" ]; then
+            IS_LIBRARY="true"
           fi
 
-      - name: 🧰 Set up Flutter SDK
-        if: steps.detect.outputs.is_dart == 'true'
-        uses: flutter-actions/setup-flutter@v3
-        with:
-          version: ${{ inputs.flutter-version }}
-          channel: stable
+          if grep -q '\[\[bin\]\]' "${REPO_PATH}/Cargo.toml" || [ -f "${REPO_PATH}/src/main.rs" ]; then
+            IS_BINARY="true"
+          fi        
 
-      - name: 📦 Install required tools
-        if: steps.detect.outputs.is_dart == 'true'
-        working-directory: ${{ inputs.repo-path }}
+          echo "is_library=${IS_LIBRARY}" >> $GITHUB_OUTPUT
+          echo "is_binary=${IS_BINARY}" >> $GITHUB_OUTPUT
+
+      - name: 🦀 Set up Rust Toolchain with components
+        if: steps.detect.outputs.is_rust == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: 📦 Install Rust analysis tools
+        if: steps.detect.outputs.is_rust == 'true'
         shell: bash
         run: |
-          npm install -g snyk@latest @cyclonedx/cdxgen@latest >/dev/null 2>&1
+          cargo install cargo-audit
+          cargo install cargo-cyclonedx
+          npm install -g snyk@latest
 
       - name: 🔐 Authentication
-        if: steps.detect.outputs.is_dart == 'true'
+        if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         env:
@@ -78,24 +80,20 @@ jobs:
           snyk config set endpoint="https://api.${SNYK_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
           snyk auth "$SNYK_SCANNER_TOKEN" >/dev/null 2>&1
 
-      - name: 📦 Resolve dependencies
-        if: steps.detect.outputs.is_dart == 'true'
-        working-directory: ${{ inputs.repo-path }}
+      - name: 📦 Check and resolve dependencies
         shell: bash
-        run: |
-          dart pub get >/dev/null 2>&1 || {
-            echo "::error::Failed to resolve dependencies"
-            exit 1
-          }
+        if: steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        run: cargo check
 
       - name: 📊 Scan, Fail if Critical or High vulnerabilities found !!!
-        if: steps.detect.outputs.is_dart == 'true'
+        if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
           cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1
 
-          snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json
+          snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json || true
 
           critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
           high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
@@ -147,13 +145,12 @@ jobs:
           fi
 
       - name: 🧹 Cleanup
-        if: always() && steps.detect.outputs.is_dart == 'true'
+        shell: bash
+        if: always() && steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        run: |
-          rm -f pub-sbom.json sbom-result.json
+        run: rm -f pub-sbom.json sbom-result.json
 
-      - name: ℹ️ Skip if not a Dart/Flutter project
-        if: steps.detect.outputs.is_dart != 'true'
+      - name: ℹ️ Skip if not a Rust project
         shell: bash
-        run: echo "🟡 Skipping scan - not a Dart/Flutter project"
+        if: steps.detect.outputs.is_rust != 'true'
+        run: echo "🟡 Skipping scan - not a Rust project"
