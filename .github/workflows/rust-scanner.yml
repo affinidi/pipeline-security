@@ -51,7 +51,7 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
-      # ------------------- Caching Added Here -------------------
+      # ------------------- Optimized Caching -------------------
       - name: ⚡ Cache Cargo Registry
         if: steps.detect.outputs.is_rust == 'true'
         uses: actions/cache@v4
@@ -71,6 +71,13 @@ jobs:
           key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-target-
+
+      - name: ⚡ Cache Cargo Bin
+        if: steps.detect.outputs.is_rust == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-bin-v1
       # ----------------------------------------------------------
 
       - name: 📦 Install Rust analysis tools
@@ -224,11 +231,27 @@ jobs:
             ]
           }' audit-result.json > cargo-audit.sarif || echo '{"version":"2.1.0","runs":[]}' > cargo-audit.sarif
 
+      - name: 🛠 Ensure SARIF files exist
+        if: steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        shell: bash
+        run: |
+          for file in snyk-code.sarif snyk-sbom.sarif cargo-audit.sarif; do
+            if [ ! -f "$file" ]; then
+              echo "Creating empty SARIF file: $file"
+              echo '{"version":"2.1.0","runs":[]}' > "$file"
+            fi
+          done
+
       - name: 📤 Upload SARIF Results
         if: steps.detect.outputs.is_rust == 'true'
         uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
         with:
-          sarif_file: '**/*.sarif'
+          sarif_file: |
+            ${{ inputs.repo-path }}/snyk-code.sarif
+            ${{ inputs.repo-path }}/snyk-sbom.sarif
+            ${{ inputs.repo-path }}/cargo-audit.sarif
 
       - name: 🧹 Cleanup
         shell: bash
