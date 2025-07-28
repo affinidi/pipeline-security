@@ -108,7 +108,7 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          cargo cyclonedx --format json --output cargo-sbom.json
+          cargo cyclonedx --format json > cargo-sbom.json
 
           snyk sbom test --experimental --file cargo-sbom.json --org=affinidi --json > sbom-result.json || true
 
