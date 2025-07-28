@@ -51,27 +51,14 @@ jobs:
             echo "is_dart=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: ⚡ Restore Flutter SDK Cache
-        id: cache-flutter
-        if: steps.detect.outputs.is_flutter == 'true'
-        uses: actions/cache/restore@v4
-        with:
-          path: /opt/hostedtoolcache/flutter
-          key: ${{ runner.os }}-flutter-${{ inputs.flutter-version }}
-
       - name: 🧰 Set up Flutter SDK
         if: steps.detect.outputs.is_flutter == 'true'
         uses: flutter-actions/setup-flutter@v3
         with:
           version: ${{ inputs.flutter-version }}
           channel: stable
-
-      - name: 💾 Save Flutter SDK Cache
-        if: steps.detect.outputs.is_flutter == 'true' && steps.cache-flutter.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /opt/hostedtoolcache/flutter
-          key: ${{ runner.os }}-flutter-${{ inputs.flutter-version }}
+          cache: true
+          cache-sdk: true
 
       - name: ⚡ Cache Global NPM Tools
         id: cache-npm
@@ -176,13 +163,6 @@ jobs:
         shell: bash
         run: |
           rm -f pub-sbom.json sbom-result.json
-
-      - name: 🗂 Cache Summary
-        if: steps.detect.outputs.is_dart == 'true'
-        run: |
-          echo "📦 Cache Summary:"
-          echo "  - Flutter Cache: ${{ steps.cache-flutter.outputs.cache-hit }}"
-          echo "  - NPM Tools: ${{ steps.cache-npm.outputs.cache-hit }}"
 
       - name: ℹ️ Skip if not a Dart/Flutter project
         if: steps.detect.outputs.is_dart != 'true'
