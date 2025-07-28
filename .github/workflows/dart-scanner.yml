@@ -24,6 +24,7 @@ jobs:
   dart-scan:
     name: Dart Security Scanner
     runs-on: ubuntu-latest
+
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
@@ -67,10 +68,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pub-
 
-      - name: 🔎 Check Pub Cache Hit
-        if: steps.detect.outputs.is_dart == 'true'
-        run: echo "Cache hit for Dart pub? ${{ steps.cache-pub.outputs.cache-hit }}"
-
       - name: ⚡ Cache Global NPM Tools
         id: cache-npm
         if: steps.detect.outputs.is_dart == 'true'
@@ -79,10 +76,6 @@ jobs:
           path: ~/.npm-global
           key: ${{ runner.os }}-npm-tools-v1
 
-      - name: 🔎 Check NPM Tools Cache Hit
-        if: steps.detect.outputs.is_dart == 'true'
-        run: echo "Cache hit for NPM tools? ${{ steps.cache-npm.outputs.cache-hit }}"
-
       - name: 📦 Install required tools
         if: steps.detect.outputs.is_dart == 'true'
         working-directory: ${{ inputs.repo-path }}
@@ -90,8 +83,8 @@ jobs:
         run: |
           mkdir -p ~/.npm-global
           npm config set prefix ~/.npm-global
-          export PATH="$HOME/.npm-global/bin:$PATH"
           npm install -g snyk@latest @cyclonedx/cdxgen@latest >/dev/null 2>&1
+          echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
 
       - name: 🔐 Authentication
         if: steps.detect.outputs.is_dart == 'true'
@@ -122,10 +115,7 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          export PATH="$HOME/.npm-global/bin:$PATH"
-
           cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1
-
           snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json
 
           critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
@@ -133,7 +123,6 @@ jobs:
           unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
 
           echo "::group::📊 Vulnerability Summary"
-
           jq -er '
             if ((.vulnerabilities? // []) | length) == 0 then
               empty
@@ -163,7 +152,6 @@ jobs:
                 )
             end
           ' sbom-result.json || echo "✅ No vulnerabilities detected, Great job! 🎉"
-
           echo "::endgroup::"
 
           if [[ "$critical" -gt 0 || "$high" -gt 0 ]]; then
@@ -183,6 +171,13 @@ jobs:
         shell: bash
         run: |
           rm -f pub-sbom.json sbom-result.json
+
+      - name: 🗂 Cache Summary
+        if: steps.detect.outputs.is_dart == 'true'
+        run: |
+          echo "📦 Cache Summary:"
+          echo "  - Pub Cache: ${{ steps.cache-pub.outputs.cache-hit }}"
+          echo "  - NPM Tools: ${{ steps.cache-npm.outputs.cache-hit }}"
 
       - name: ℹ️ Skip if not a Dart/Flutter project
         if: steps.detect.outputs.is_dart != 'true'
