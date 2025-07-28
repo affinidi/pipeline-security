@@ -94,11 +94,11 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          echo "Running Snyk Code Test..."
-          snyk code test --json > snyk-code-result.json || true
+          echo "Running Snyk Code Test with SARIF output..."
+          snyk code test --sarif-file-output=snyk-code.sarif || true
 
-          code_critical=$(jq '[.issues[]? | select(.severity == "critical")] | length' snyk-code-result.json)
-          code_high=$(jq '[.issues[]? | select(.severity == "high")] | length' snyk-code-result.json)
+          code_critical=$(jq '[.runs[0].results[]? | select(.level == "error")] | length' snyk-code.sarif)
+          code_high=$(jq '[.runs[0].results[]? | select(.level == "warning")] | length' snyk-code.sarif)
 
           echo "code_critical=$code_critical" >> $GITHUB_ENV
           echo "code_high=$code_high" >> $GITHUB_ENV
@@ -108,7 +108,7 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          cargo cyclonedx --output-format json --output-file cargo-sbom.json
+          cargo cyclonedx --format json --output cargo-sbom.json
 
           snyk sbom test --experimental --file cargo-sbom.json --org=affinidi --json > sbom-result.json || true
 
@@ -154,7 +154,7 @@ jobs:
           # Snyk Code Test vulnerabilities
           if [[ $code_critical -gt 0 || $code_high -gt 0 ]]; then
             echo "🔎 Snyk Code Test Findings:"
-            jq -r '.issues[] | "⚠️ [\(.severity)] \(.title) - \(.id)"' snyk-code-result.json
+            jq -r '.runs[0].results[] | "⚠️ [\(.level)] \(.message.text)"' snyk-code.sarif
           else
             echo "✅ No code issues detected by Snyk Code Test!"
           fi
@@ -170,11 +170,66 @@ jobs:
             echo "✅ No Critical (🟣) or High (🔴) vulnerabilities found. Great job! 🎉"
           fi
 
+      - name: 🗂 Convert Snyk SBOM JSON to SARIF
+        if: steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        shell: bash
+        run: |
+          jq '{
+            version: "2.1.0",
+            runs: [
+              {
+                tool: { driver: { name: "Snyk SBOM Test" }},
+                results: (.vulnerabilities? // []) | map({
+                  ruleId: .id,
+                  level: (if .severity == "critical" then "error"
+                          elif .severity == "high" then "error"
+                          elif .severity == "medium" then "warning"
+                          else "note" end),
+                  message: { text: .title },
+                  locations: [{ physicalLocation: { artifactLocation: { uri: .packageName }}}]
+                })
+              }
+            ]
+          }' sbom-result.json > snyk-sbom.sarif
+
+      - name: 🗂 Convert Cargo Audit JSON to SARIF
+        if: steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        shell: bash
+        run: |
+          jq '{
+            version: "2.1.0",
+            runs: [
+              {
+                tool: { driver: { name: "Cargo Audit" }},
+                results: (.vulnerabilities.list? // []) | map({
+                  ruleId: .advisory.id,
+                  level: (if .advisory.severity == "critical" then "error"
+                          elif .advisory.severity == "high" then "error"
+                          elif .advisory.severity == "medium" then "warning"
+                          else "note" end),
+                  message: { text: .advisory.title },
+                  locations: [{ physicalLocation: { artifactLocation: { uri: .package.name }}}]
+                })
+              }
+            ]
+          }' audit-result.json > cargo-audit.sarif
+
+      - name: 📤 Upload SARIF Results
+        if: steps.detect.outputs.is_rust == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: |
+            ${{ inputs.repo-path }}/snyk-code.sarif
+            ${{ inputs.repo-path }}/snyk-sbom.sarif
+            ${{ inputs.repo-path }}/cargo-audit.sarif
+
       - name: 🧹 Cleanup
         shell: bash
         if: always() && steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
-        run: rm -f cargo-metadata.json cargo-sbom.json sbom-result.json audit-result.json combined-result.json snyk-code-result.json
+        run: rm -f cargo-metadata.json cargo-sbom.json sbom-result.json audit-result.json combined-result.json snyk-code.sarif snyk-sbom.sarif cargo-audit.sarif
 
       - name: ℹ️ Skip if not a Rust project
         shell: bash
