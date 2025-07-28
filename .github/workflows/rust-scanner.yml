@@ -51,6 +51,28 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
+      # ------------------- Caching Added Here -------------------
+      - name: ⚡ Cache Cargo Registry
+        if: steps.detect.outputs.is_rust == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: ⚡ Cache Target
+        if: steps.detect.outputs.is_rust == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.repo-path }}/target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-
+      # ----------------------------------------------------------
+
       - name: 📦 Install Rust analysis tools
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
