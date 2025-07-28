@@ -57,11 +57,40 @@ jobs:
           version: ${{ inputs.flutter-version }}
           channel: stable
 
+      - name: ⚡ Cache Pub Dependencies
+        id: cache-pub
+        if: steps.detect.outputs.is_dart == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: 🔎 Check Pub Cache Hit
+        if: steps.detect.outputs.is_dart == 'true'
+        run: echo "Cache hit for Dart pub? ${{ steps.cache-pub.outputs.cache-hit }}"
+
+      - name: ⚡ Cache Global NPM Tools
+        id: cache-npm
+        if: steps.detect.outputs.is_dart == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm-global
+          key: ${{ runner.os }}-npm-tools-v1
+
+      - name: 🔎 Check NPM Tools Cache Hit
+        if: steps.detect.outputs.is_dart == 'true'
+        run: echo "Cache hit for NPM tools? ${{ steps.cache-npm.outputs.cache-hit }}"
+
       - name: 📦 Install required tools
         if: steps.detect.outputs.is_dart == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
+          mkdir -p ~/.npm-global
+          npm config set prefix ~/.npm-global
+          export PATH="$HOME/.npm-global/bin:$PATH"
           npm install -g snyk@latest @cyclonedx/cdxgen@latest >/dev/null 2>&1
 
       - name: 🔐 Authentication
@@ -93,6 +122,8 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
+          export PATH="$HOME/.npm-global/bin:$PATH"
+
           cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1
 
           snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json

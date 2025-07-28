@@ -51,8 +51,8 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
-      # ------------------- Optimized Caching -------------------
       - name: ⚡ Cache Cargo Registry
+        id: cache-cargo
         if: steps.detect.outputs.is_rust == 'true'
         uses: actions/cache@v4
         with:
@@ -63,7 +63,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: 🔎 Check Cargo Registry Cache Hit
+        if: steps.detect.outputs.is_rust == 'true'
+        run: echo "Cache hit for Cargo registry? ${{ steps.cache-cargo.outputs.cache-hit }}"
+
       - name: ⚡ Cache Target
+        id: cache-target
         if: steps.detect.outputs.is_rust == 'true'
         uses: actions/cache@v4
         with:
@@ -72,13 +77,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-target-
 
+      - name: 🔎 Check Target Cache Hit
+        if: steps.detect.outputs.is_rust == 'true'
+        run: echo "Cache hit for Cargo target? ${{ steps.cache-target.outputs.cache-hit }}"
+
       - name: ⚡ Cache Cargo Bin
+        id: cache-bin
         if: steps.detect.outputs.is_rust == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin
           key: ${{ runner.os }}-cargo-bin-v1
-      # ----------------------------------------------------------
+
+      - name: 🔎 Check Cargo Bin Cache Hit
+        if: steps.detect.outputs.is_rust == 'true'
+        run: echo "Cache hit for Cargo bin? ${{ steps.cache-bin.outputs.cache-hit }}"
 
       - name: 📦 Install Rust analysis tools
         if: steps.detect.outputs.is_rust == 'true'
