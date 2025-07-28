@@ -51,22 +51,20 @@ jobs:
             echo "is_dart=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: 🧰 Set up Flutter SDK
+      - name: ⚡ Cache Flutter SDK
+        id: cache-flutter
         if: steps.detect.outputs.is_dart == 'true'
+        uses: actions/cache@v4
+        with:
+          path: /opt/hostedtoolcache/flutter
+          key: ${{ runner.os }}-flutter-${{ inputs.flutter-version }}
+
+      - name: 🧰 Set up Flutter SDK
+        if: steps.detect.outputs.is_dart == 'true' && steps.cache-flutter.outputs.cache-hit != 'true'
         uses: flutter-actions/setup-flutter@v3
         with:
           version: ${{ inputs.flutter-version }}
           channel: stable
-
-      - name: ⚡ Cache Pub Dependencies
-        id: cache-pub
-        if: steps.detect.outputs.is_dart == 'true'
-        uses: actions/cache@v4
-        with:
-          path: ~/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pub-
 
       - name: ⚡ Cache Global NPM Tools
         id: cache-npm
@@ -176,7 +174,7 @@ jobs:
         if: steps.detect.outputs.is_dart == 'true'
         run: |
           echo "📦 Cache Summary:"
-          echo "  - Pub Cache: ${{ steps.cache-pub.outputs.cache-hit }}"
+          echo "  - Flutter Cache: ${{ steps.cache-flutter.outputs.cache-hit }}"
           echo "  - NPM Tools: ${{ steps.cache-npm.outputs.cache-hit }}"
 
       - name: ℹ️ Skip if not a Dart/Flutter project
