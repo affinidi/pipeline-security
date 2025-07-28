@@ -125,7 +125,6 @@ jobs:
         run: |
           echo "Running Snyk Code Test..."
           snyk code test --json > snyk-code-result.json || echo '{"issues":[]}' > snyk-code-result.json
-          snyk code test --sarif-file-output=snyk-code.sarif || echo '{"runs":[]}' > snyk-code.sarif
 
           code_critical=$(jq '[.issues[]? | select(.severity=="critical")] | length' snyk-code-result.json 2>/dev/null || echo 0)
           code_high=$(jq '[.issues[]? | select(.severity=="high")] | length' snyk-code-result.json 2>/dev/null || echo 0)
@@ -191,73 +190,11 @@ jobs:
             echo "✅ No Critical (🟣) or High (🔴) vulnerabilities found. Great job! 🎉"
           fi
 
-      - name: 🗂 Convert Snyk SBOM JSON to SARIF
-        if: steps.detect.outputs.is_rust == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        run: |
-          jq '{
-            version: "2.1.0",
-            runs: [
-              {
-                tool: { driver: { name: "Snyk SBOM Test" }},
-                results: (.vulnerabilities? // []) | map({
-                  ruleId: .id,
-                  level: (if .severity == "critical" or .severity == "high" then "error" elif .severity == "medium" then "warning" else "note" end),
-                  message: { text: .title },
-                  locations: [{ physicalLocation: { artifactLocation: { uri: .packageName }}}]
-                })
-              }
-            ]
-          }' sbom-result.json > snyk-sbom.sarif || echo '{"version":"2.1.0","runs":[]}' > snyk-sbom.sarif
-
-      - name: 🗂 Convert Cargo Audit JSON to SARIF
-        if: steps.detect.outputs.is_rust == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        run: |
-          jq '{
-            version: "2.1.0",
-            runs: [
-              {
-                tool: { driver: { name: "Cargo Audit" }},
-                results: (.vulnerabilities.list? // []) | map({
-                  ruleId: .advisory.id,
-                  level: (if .advisory.severity == "critical" or .advisory.severity == "high" then "error" elif .advisory.severity == "medium" then "warning" else "note" end),
-                  message: { text: .advisory.title },
-                  locations: [{ physicalLocation: { artifactLocation: { uri: .package.name }}}]
-                })
-              }
-            ]
-          }' audit-result.json > cargo-audit.sarif || echo '{"version":"2.1.0","runs":[]}' > cargo-audit.sarif
-
-      - name: 🛠 Ensure SARIF files exist
-        if: steps.detect.outputs.is_rust == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        run: |
-          for file in snyk-code.sarif snyk-sbom.sarif cargo-audit.sarif; do
-            if [ ! -f "$file" ]; then
-              echo "Creating empty SARIF file: $file"
-              echo '{"version":"2.1.0","runs":[]}' > "$file"
-            fi
-          done
-
-      - name: 📤 Upload SARIF Results
-        if: steps.detect.outputs.is_rust == 'true'
-        uses: github/codeql-action/upload-sarif@v3
-        continue-on-error: true
-        with:
-          sarif_file: |
-            ${{ inputs.repo-path }}/snyk-code.sarif
-            ${{ inputs.repo-path }}/snyk-sbom.sarif
-            ${{ inputs.repo-path }}/cargo-audit.sarif
-
       - name: 🧹 Cleanup
         shell: bash
         if: always() && steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
-        run: rm -f cargo-metadata.json cargo-sbom.json sbom-result.json audit-result.json combined-result.json snyk-code-result.json snyk-code.sarif snyk-sbom.sarif cargo-audit.sarif
+        run: rm -f cargo-metadata.json cargo-sbom.json sbom-result.json audit-result.json combined-result.json snyk-code-result.json
 
       - name: ℹ️ Skip if not a Rust project
         shell: bash
