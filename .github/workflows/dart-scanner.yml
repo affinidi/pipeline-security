@@ -41,6 +41,16 @@ jobs:
             exit 0
           fi
 
+          if grep -q "sdk: flutter" "${REPO_PATH}/pubspec.yaml" || grep -q "flutter:" "${REPO_PATH}/pubspec.yaml"; then
+            echo "Project Type : Flutter"
+            echo "is_flutter=true" >> $GITHUB_OUTPUT
+            echo "is_dart=true" >> $GITHUB_OUTPUT
+          else
+            echo "Project Type : Dart"
+            echo "is_flutter=false" >> $GITHUB_OUTPUT
+            echo "is_dart=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: 🧰 Set up Flutter SDK
         if: steps.detect.outputs.is_dart == 'true'
         uses: flutter-actions/setup-flutter@v3
