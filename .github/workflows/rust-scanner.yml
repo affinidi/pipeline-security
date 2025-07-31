@@ -105,14 +105,6 @@ jobs:
           snyk config set endpoint="https://api.${SNYK_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
           snyk auth "$SNYK_SCANNER_TOKEN" >/dev/null 2>&1
 
-      - name: 📦 Generate dependency metadata
-        if: steps.detect.outputs.is_rust == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        run: |
-          echo "Generating Cargo dependency metadata..."
-          cargo metadata --format-version=1 --no-deps > cargo-metadata.json
-
       - name: 🛡️ Run Cargo Audit (RustSec)
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
@@ -182,7 +174,7 @@ jobs:
         if: always() && steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
-        run: rm -f cargo-metadata.json cargo-sbom.json sbom-result.json audit-result.json combined-result.json snyk-code-result.json
+        run: rm -f cargo-sbom.json sbom-result.json audit-result.json combined-result.json snyk-code-result.json
 
       - name: ℹ️ Skip if not a Rust project
         if: steps.detect.outputs.is_rust != 'true'
