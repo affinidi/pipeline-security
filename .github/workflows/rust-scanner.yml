@@ -28,7 +28,6 @@ jobs:
         shell: bash
         run: |
           REPO_PATH="${{ inputs.repo-path }}"
-
           if [ ! -f "${REPO_PATH}/Cargo.toml" ]; then
             echo "::warning::No Cargo.toml found - not a Rust project"
             echo "is_rust=false" >> $GITHUB_OUTPUT
@@ -37,19 +36,11 @@ jobs:
           echo "Project Type : Rust"
           echo "is_rust=true" >> $GITHUB_OUTPUT
 
-          IS_LIBRARY="false"
-          IS_BINARY="false"
-
-          if grep -q '\[lib\]' "${REPO_PATH}/Cargo.toml" || [ -f "${REPO_PATH}/src/lib.rs" ]; then
-            IS_LIBRARY="true"
-          fi
-
-          if grep -q '\[\[bin\]\]' "${REPO_PATH}/Cargo.toml" || [ -f "${REPO_PATH}/src/main.rs" ]; then
-            IS_BINARY="true"
-          fi        
-
-          echo "is_library=${IS_LIBRARY}" >> $GITHUB_OUTPUT
-          echo "is_binary=${IS_BINARY}" >> $GITHUB_OUTPUT
+      - name: 📦 Install system libraries
+        if: steps.detect.outputs.is_rust == 'true'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y pkg-config libdbus-1-dev
 
       - name: 🦀 Set up Rust Toolchain with components
         if: steps.detect.outputs.is_rust == 'true'
@@ -58,12 +49,47 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
+      - name: ⚡ Cache Cargo Registry
+        id: cache-cargo
+        if: steps.detect.outputs.is_rust == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: ⚡ Cache Target
+        id: cache-target
+        if: steps.detect.outputs.is_rust == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.repo-path }}/target
+          key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-
+
+      - name: ⚡ Cache Cargo Bin
+        id: cache-bin
+        if: steps.detect.outputs.is_rust == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-bin-v1
+
       - name: 📦 Install Rust analysis tools
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
         run: |
-          cargo install cargo-audit
-          cargo install cargo-cyclonedx
+          # Only install if missing
+          if ! command -v cargo-cyclonedx >/dev/null 2>&1; then
+            cargo install cargo-cyclonedx
+          fi
+          if ! command -v cargo-audit >/dev/null 2>&1; then
+            cargo install cargo-audit
+          fi
           npm install -g snyk@latest
 
       - name: 🔐 Authentication
@@ -76,81 +102,81 @@ jobs:
         run: |
           echo "::add-mask::$SNYK_SCANNER_TOKEN"
           echo "::add-mask::$SNYK_SCANNER_REGION"
-
           snyk config set endpoint="https://api.${SNYK_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
           snyk auth "$SNYK_SCANNER_TOKEN" >/dev/null 2>&1
 
-      - name: 📦 Check and resolve dependencies
-        shell: bash
-        if: steps.detect.outputs.is_rust == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        run: cargo check
-
-      - name: 📊 Scan, Fail if Critical or High vulnerabilities found !!!
+      - name: 🛡️ Run Cargo Audit (RustSec)
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1
+          echo "Running cargo audit..."
+          cargo audit --json > audit-result.json || echo '{}' > audit-result.json
 
-          snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json || true
+      - name: 🔎 Snyk Code Test (SAST)
+        if: steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        shell: bash
+        run: |
+          echo "Running Snyk Code Test..."
+          snyk code test --json > snyk-code-result.json || echo '{"issues":[]}' > snyk-code-result.json
+          code_critical=$(jq '[.issues[]? | select(.severity=="critical")] | length' snyk-code-result.json 2>/dev/null || echo 0)
+          code_high=$(jq '[.issues[]? | select(.severity=="high")] | length' snyk-code-result.json 2>/dev/null || echo 0)
+          echo "code_critical=$code_critical" >> $GITHUB_ENV
+          echo "code_high=$code_high" >> $GITHUB_ENV
 
-          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
-          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
-          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
-
+      - name: 📊 Unified Vulnerability Scan
+        if: steps.detect.outputs.is_rust == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        shell: bash
+        run: |
+          cargo cyclonedx --format json > cargo-sbom.json
+          snyk sbom test --experimental --file cargo-sbom.json --org=affinidi --json > sbom-result.json || echo '{}' > sbom-result.json
+          jq -s '{cargo_audit: .[0], snyk: .[1]}' audit-result.json sbom-result.json > combined-result.json
+          audit_critical=$(jq '[.cargo_audit.vulnerabilities.list[]? | select(.advisory.severity=="critical")] | length' combined-result.json 2>/dev/null || echo 0)
+          audit_high=$(jq '[.cargo_audit.vulnerabilities.list[]? | select(.advisory.severity=="high")] | length' combined-result.json 2>/dev/null || echo 0)
+          snyk_critical=$(jq '[.snyk.vulnerabilities? // [] | .[] | select(.severity=="critical")] | length' combined-result.json 2>/dev/null || echo 0)
+          snyk_high=$(jq '[.snyk.vulnerabilities? // [] | .[] | select(.severity=="high")] | length' combined-result.json 2>/dev/null || echo 0)
+          total_critical=$((audit_critical + snyk_critical + code_critical))
+          total_high=$((audit_high + snyk_high + code_high))
           echo "::group::📊 Vulnerability Summary"
-
-          jq -er '
-            if ((.vulnerabilities? // []) | length) == 0 then
-              empty
-            else
-              .vulnerabilities
-              | group_by(.severity?)[]
-              | {
-                  severity: .[0].severity,
-                  issues: [.[] | {
-                    id: .id?,
-                    title: .title?,
-                    pkg: .packageName?,
-                    version: .version?
-                  }]
-                }
-              | (
-                  if .severity == "critical" then "\n🟣 CRITICAL SEVERITY"
-                  elif .severity == "high" then "\n🔴 HIGH SEVERITY"
-                  elif .severity == "medium" then "\n🟠 MEDIUM SEVERITY"
-                  elif .severity == "low" then "\n🟡 LOW SEVERITY"
-                  else "\n⚪ UNKNOWN SEVERITY"
-                  end
-                ) + "\n" +
-                (
-                  .issues[]
-                  | "\n- \(.title) [\(.id)]\n  📦 Package: \(.pkg)@\(.version)"
-                )
-            end
-          ' sbom-result.json || echo "✅ No vulnerabilities detected, Great job! 🎉"
-
+          if [[ $(jq '.cargo_audit.vulnerabilities.list | length' combined-result.json) -gt 0 ]]; then
+            echo "🦀 Cargo Audit Findings:"
+            jq -r '.cargo_audit.vulnerabilities.list[] | "⚠️ [\(.advisory.severity // "unknown")] \(.advisory.title) - \(.package.name)@\(.package.version)"' combined-result.json
+          else
+            echo "✅ No vulnerabilities detected by Cargo Audit!"
+          fi
+          echo
+          if [[ $(jq '(.snyk.vulnerabilities? // []) | length' combined-result.json) -gt 0 ]]; then
+            echo "🔍 Snyk SBOM Findings:"
+            jq -r '.snyk.vulnerabilities[] | "⚠️ [\(.severity)] \(.title) - \(.packageName)@\(.version)"' combined-result.json
+          else
+            echo "✅ No vulnerabilities detected by Snyk!"
+          fi
+          echo
+          if [[ $code_critical -gt 0 || $code_high -gt 0 ]]; then
+            echo "🔎 Snyk Code Test Findings:"
+            jq -r '.issues[]? | "⚠️ [\(.severity)] \(.title) - \(.id)"' snyk-code-result.json
+          else
+            echo "✅ No code issues detected by Snyk Code Test!"
+          fi
           echo "::endgroup::"
-
-          if [[ "$critical" -gt 0 || "$high" -gt 0 ]]; then
+          if [[ "$total_critical" -gt 0 || "$total_high" -gt 0 ]]; then
             echo "::error::❌ Scan failed due to high-severity issues:"
-            echo "  🟣 Critical vulnerabilities: $critical"
-            echo "  🔴 High vulnerabilities: $high"
+            echo "  🟣 Critical vulnerabilities: $total_critical"
+            echo "  🔴 High vulnerabilities: $total_high"
             exit 1
-          elif [[ "$unknown" -gt 0 ]]; then
-            echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
           else
             echo "✅ No Critical (🟣) or High (🔴) vulnerabilities found. Great job! 🎉"
           fi
 
       - name: 🧹 Cleanup
-        shell: bash
         if: always() && steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
-        run: rm -f pub-sbom.json sbom-result.json
+        shell: bash
+        run: rm -f cargo-sbom.json sbom-result.json audit-result.json combined-result.json snyk-code-result.json
 
       - name: ℹ️ Skip if not a Rust project
-        shell: bash
         if: steps.detect.outputs.is_rust != 'true'
+        shell: bash
         run: echo "🟡 Skipping scan - not a Rust project"
