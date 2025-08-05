@@ -104,8 +104,6 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          set -euo pipefail
-
           cdxgen -t pub -o pub-sbom.json
 
           POLICY_PATH="${{ inputs.repo-path }}/.snyk"
@@ -119,7 +117,7 @@ jobs:
           fi
 
           echo "::group::📊 Vulnerability Summary"
-          jq -er '
+          jq '
             if ((.vulnerabilities? // []) | length) == 0 then
               empty
             else
