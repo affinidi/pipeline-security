@@ -107,6 +107,8 @@ jobs:
         run: |
           cdxgen -t pub -o pub-sbom.json
 
+          cat pub-sbom.json
+
           POLICY_PATH="${{ inputs.repo-path }}/.snyk"
 
           if [ -f "$POLICY_PATH" ]; then
@@ -117,7 +119,6 @@ jobs:
             snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json
           fi
 
-          echo "::group::📊 Vulnerability Summary"
           jq '
             if ((.vulnerabilities? // []) | length) == 0 then
               empty
@@ -147,7 +148,6 @@ jobs:
                 )
             end
           ' sbom-result.json || echo "✅ No vulnerabilities detected, Great job! 🎉"
-          echo "::endgroup::"
 
           critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
           high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
