@@ -68,15 +68,16 @@ jobs:
           path: ~/.npm-global
           key: ${{ runner.os }}-npm-tools-v1
 
-      - name: 📦 Install required tools
+      - name: 📦 Install required npm tools if not present
         if: steps.detect.outputs.is_dart == 'true'
-        working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          mkdir -p ~/.npm-global
-          npm config set prefix ~/.npm-global
-          npm install -g snyk@latest @cyclonedx/cdxgen@latest
-          echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
+          if ! command -v snyk > /dev/null || ! command -v cdxgen > /dev/null; then
+            mkdir -p ~/.npm-global
+            npm config set prefix ~/.npm-global
+            npm install -g snyk@latest @cyclonedx/cdxgen@latest
+            echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
+          fi
 
       - name: 🔐 Authentication
         if: steps.detect.outputs.is_dart == 'true'
