@@ -105,9 +105,15 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          cdxgen -t pub -o pub-sbom.json
-
-          cat pub-sbom.json
+          if ! cdxgen -t pub -o pub-sbom.json; then
+            echo "::warning::⚠️ cdxgen exited with error — check if SBOM is valid"
+            if [ -s pub-sbom.json ]; then
+              echo "pub-sbom.json exists and is not empty. Continuing..."
+            else
+              echo "::error::❌ SBOM generation failed completely. Aborting."
+              exit 1
+            fi
+          fi
 
           POLICY_PATH="${{ inputs.repo-path }}/.snyk"
 
