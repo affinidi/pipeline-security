@@ -75,7 +75,7 @@ jobs:
         run: |
           mkdir -p ~/.npm-global
           npm config set prefix ~/.npm-global
-          npm install -g snyk@latest @cyclonedx/cdxgen@latest >/dev/null 2>&1
+          npm install -g snyk@latest @cyclonedx/cdxgen@latest
           echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
 
       - name: 🔐 Authentication
@@ -97,22 +97,26 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          dart pub get >/dev/null 2>&1 || {
-            echo "::error::Failed to resolve dependencies"
-            exit 1
-          }
+          dart pub get
 
       - name: 📊 Scan, Fail if Critical or High vulnerabilities found !!!
         if: steps.detect.outputs.is_dart == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1
-          snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json
+          set -euo pipefail
 
-          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
-          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
-          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
+          cdxgen -t pub -o pub-sbom.json
+
+          POLICY_PATH="${{ inputs.repo-path }}/.snyk"
+
+          if [ -f "$POLICY_PATH" ]; then
+            echo "Using .snyk policy file from target repo"
+            snyk sbom test --experimental --file pub-sbom.json --org=affinidi --policy-path="$POLICY_PATH" --json > sbom-result.json
+          else
+            echo "No .snyk policy file found in target repo, proceeding without it"
+            snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json
+          fi
 
           echo "::group::📊 Vulnerability Summary"
           jq -er '
@@ -146,10 +150,19 @@ jobs:
           ' sbom-result.json || echo "✅ No vulnerabilities detected, Great job! 🎉"
           echo "::endgroup::"
 
+          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
+          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
+          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
+          total=$(jq '[.vulnerabilities? // [] | length]' sbom-result.json)
+          
+          echo "----- Vulnerabilities Stats -------"
+          echo "Total vulnerabilities found: $total"
+          echo "Critical vulnerabilities: $critical"
+          echo "High vulnerabilities: $high"
+          echo "Unknown severity vulnerabilities: $unknown"
+
           if [[ "$critical" -gt 0 || "$high" -gt 0 ]]; then
-            echo "::error::❌ Scan failed due to high-severity issues:"
-            echo "  🟣 Critical vulnerabilities: $critical"
-            echo "  🔴 High vulnerabilities: $high"
+            echo "::error::❌ Scan failed due to high-severity issues"
             exit 1
           elif [[ "$unknown" -gt 0 ]]; then
             echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"

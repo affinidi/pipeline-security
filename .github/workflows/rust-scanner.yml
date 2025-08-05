@@ -113,7 +113,7 @@ jobs:
           echo "Running cargo audit..."
           cargo audit --json > audit-result.json || echo '{}' > audit-result.json
 
-      - name: 🔎 Snyk Code Test (SAST)
+      - name: 🔎 Snyk Code Test
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
