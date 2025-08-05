@@ -100,16 +100,14 @@ jobs:
         run: |
           dart pub get
 
-      - name: 📊 Scan, Fail if Critical or High vulnerabilities found !!!
+      - name: 🧪 Run SBOM Scan with Snyk
         if: steps.detect.outputs.is_dart == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
           if ! cdxgen -t pub -o pub-sbom.json; then
             echo "::warning::⚠️ cdxgen exited with error — check if SBOM is valid"
-            if [ -s pub-sbom.json ]; then
-              echo "pub-sbom.json exists and is not empty. Continuing..."
-            else
+            if [ ! -s pub-sbom.json ]; then
               echo "::error::❌ SBOM generation failed completely. Aborting."
               exit 1
             fi
@@ -125,6 +123,12 @@ jobs:
             snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json
           fi
 
+      - name: 📋 Print Vulnerability Summary
+        if: steps.detect.outputs.is_dart == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        shell: bash
+        run: |
+          echo "::group::📊 Vulnerability Summary"
           jq '
             if ((.vulnerabilities? // []) | length) == 0 then
               empty
@@ -154,12 +158,18 @@ jobs:
                 )
             end
           ' sbom-result.json || echo "✅ No vulnerabilities detected, Great job! 🎉"
+          echo "::endgroup::"
 
+      - name: ❌ Fail if Critical or High vulnerabilities
+        if: steps.detect.outputs.is_dart == 'true'
+        working-directory: ${{ inputs.repo-path }}
+        shell: bash
+        run: |
           critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
           high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
           unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
           total=$(jq '[.vulnerabilities? // [] | length]' sbom-result.json)
-          
+
           echo "----- Vulnerabilities Stats -------"
           echo "Total vulnerabilities found: $total"
           echo "Critical vulnerabilities: $critical"
