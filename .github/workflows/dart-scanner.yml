@@ -146,14 +146,14 @@ jobs:
           fi
 
           # 4. Extract counts 
-          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json | tr -d '[]')
-          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json | tr -d '[]')
-          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json | tr -d '[]')
+          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
+          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
+          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
 
-          # 6. Detailed findings
+          # 5. Handle findings
           if [[ $critical -gt 0 || $high -gt 0 ]]; then
             echo "----------------------------------------------------------------------"
-            echo "                        VULNERABILITY DETAILS.          "
+            echo "                        VULNERABILITY DETAILS          "
             echo "----------------------------------------------------------------------"
             jq -r '
               .vulnerabilities[]
@@ -167,10 +167,7 @@ jobs:
                       else "See: \(.url // "No fix info")" end)\n" +
                 "---"
             ' sbom-result.json
-          fi
 
-          # 7. Fail conditions
-          if [[ "$critical" -gt 0 || "$high" -gt 0 ]]; then
             echo "::error::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
             echo "::error::│ CRITICAL SECURITY ISSUES DETECTED                   "
             echo "::error::├────────────────────────────────────────────────────────────────────────────────────────────────────────"
@@ -183,8 +180,13 @@ jobs:
             echo "::error::│ 2. Add justified exceptions in .snyk policy file for unblocking the pipeline, consult Security   "
             echo "::error::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
             exit 1
+
           elif [[ "$unknown" -gt 0 ]]; then
             echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
+          else
+            echo "----------------------------------------------------------------------"
+            echo "✅ All good, no critical or high vulnerabilities found. Good job! 🎉"
+            echo "----------------------------------------------------------------------"
           fi
 
       - name: 🧹 Cleanup
