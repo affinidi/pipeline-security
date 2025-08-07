@@ -126,10 +126,10 @@ jobs:
 
           echo "Running Snyk scan..."
           if [ -f "$POLICY_PATH" ]; then
-            echo "Using .snyk policy file"
+            echo "NOTE: Using .snyk policy file"
             snyk sbom test $SNYK_COMMON_ARGS --policy-path="$POLICY_PATH" --json > sbom-result.json || SNYK_EXIT=$?
           else
-            echo "No .snyk policy file found"
+            echo "NOTE: No .snyk policy file found"
             snyk sbom test $SNYK_COMMON_ARGS --json > sbom-result.json || SNYK_EXIT=$?
           fi
 
@@ -143,26 +143,10 @@ jobs:
           critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json | tr -d '[]')
           high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json | tr -d '[]')
           unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json | tr -d '[]')
-          total=$(jq '[.vulnerabilities? // [] | length]' sbom-result.json | tr -d '[]')
 
-          # 5. Display beautiful vulnerability summary
-          echo "::group::📊 Security Scan Results"
-          echo "┌───────────────────────┬─────────┐"
-          echo "│ Vulnerability Severity │ Count   │"
-          echo "├───────────────────────┼─────────┤"
-          printf "│ ${PURPLE}Critical${NC}            │ %-7s │\n" "$critical"
-          printf "│ ${RED}High${NC}                │ %-7s │\n" "$high"
-          echo "│ Medium                │ $(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "medium")] | length' sbom-result.json | tr -d '[]') │"
-          echo "│ Low                   │ $(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "low")] | length' sbom-result.json | tr -d '[]') │"
-          echo "│ Unknown               │ $unknown │"
-          echo "├───────────────────────┼─────────┤"
-          echo "│ ${BOLD}Total${NC}                 │ ${BOLD}$total${NC} │"
-          echo "└───────────────────────┴─────────┘"
-          echo "::endgroup::"
-
-          # 6. Detailed findings
+          # 5. Detailed findings
           if [[ $critical -gt 0 || $high -gt 0 ]]; then
-            echo "::group::🟣 Critical / 🔴 High Vulnerabilities"
+            echo "🟣 Critical / 🔴 High Vulnerabilities"
             jq -r '
               .vulnerabilities[]
               | select(.severity == "critical" or .severity == "high")
@@ -175,22 +159,21 @@ jobs:
                        else "See: \(.url // "No fix info")" end)\n" +
                 "---"
             ' sbom-result.json
-            echo "::endgroup::"
           fi
 
-          # 7. Fail conditions
+          # 6. Fail conditions
           if [[ "$critical" -gt 0 || "$high" -gt 0 ]]; then
-            echo "::error::┌─────────────────────────────────────────────────────┐"
-            echo "::error::│ ${RED}${BOLD}CRITICAL SECURITY ISSUES DETECTED${NC}              │"
-            echo "::error::├─────────────────────────────────────────────────────┤"
-            echo "::error::│ 🟣 Critical vulnerabilities: $critical               │"
-            echo "::error::│ 🔴 High vulnerabilities: $high                      │"
-            echo "::error::│                                                     │"
-            echo "::error::│ Review the detailed report above and either:        │"
-            echo "::error::│                                                     │"
-            echo "::error::│ 1. Fix Vulnerabilities                              │"
-            echo "::error::│ 2. Add justified exceptions in .snyk policy file    │"
-            echo "::error::└─────────────────────────────────────────────────────┘"
+            echo "::error::┌───────────────────────────────────────────────────────────────────────────────────────"
+            echo "::error::│ ${RED}${BOLD}CRITICAL SECURITY ISSUES DETECTED${NC}                  "
+            echo "::error::├───────────────────────────────────────────────────────────────────────────────────────"
+            echo "::error::│ 🟣 Critical vulnerabilities: $critical               "
+            echo "::error::│ 🔴 High vulnerabilities: $high                      "
+            echo "::error::│                                                     "
+            echo "::error::│ Review the detailed report above and either:        "
+            echo "::error::│                                                     "
+            echo "::error::│ 1. Fix Vulnerabilities OR                           "
+            echo "::error::│ 2. Add justified exceptions in .snyk policy file after consulting with Security    "
+            echo "::error::└───────────────────────────────────────────────────────────────────────────────────────"
             exit 1
           elif [[ "$unknown" -gt 0 ]]; then
             echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
