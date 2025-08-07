@@ -100,13 +100,19 @@ jobs:
         run: |
           dart pub get
 
+      - name: 📦 Install yq
+        if: steps.detect.outputs.is_dart == 'true'
+        run: |
+          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+          sudo chmod +x /usr/bin/yq
+
       - name: 🧪 Run SBOM Scan and Check Vulnerabilities
         if: steps.detect.outputs.is_dart == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          # 1. Generate and validate SBOM
           echo "----------------------------------------------------------------------"
+          echo "📦 Generating SBOM with cdxgen"
           if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
@@ -119,39 +125,46 @@ jobs:
             echo "::error::❌ Invalid SBOM JSON"
             exit 1
           fi
-
           echo "✓ Generated SBOM"
 
-          # 2. Run Snyk scan
-          POLICY_PATH="${{ inputs.repo-path }}/.snyk"
-          SNYK_COMMON_ARGS="--experimental --file pub-sbom.json --org=affinidi"
-
           echo "----------------------------------------------------------------------"
-          echo "Running Snyk SBOM scan..."
+          echo "🔍 Running Snyk SBOM Scan"
           SNYK_EXIT=0
-          if [ -f "$POLICY_PATH" ]; then
-            echo "NOTE : Using local .snyk policy file"
-            snyk sbom test $SNYK_COMMON_ARGS --policy-path="$POLICY_PATH" --json > sbom-result.json || SNYK_EXIT=$?
-          else
-            echo "NOTE : .snyk policy file not found"
-            snyk sbom test $SNYK_COMMON_ARGS --json > sbom-result.json || SNYK_EXIT=$?
-          fi
-
-          echo "----------------------------------------------------------------------"
+          snyk config set org=affinidi
+          snyk sbom test --experimental --file pub-sbom.json --json > sbom-result.json || SNYK_EXIT=$?
           echo "✓ Scanning Finished"
 
-          # 3. Process results
           if [[ "$SNYK_EXIT" -ne 0 ]] && [ ! -f "sbom-result.json" ]; then
             echo "::error::❌ Snyk scan failed and no results file was generated"
             exit 1
           fi
 
-          # 4. Extract counts with fallback to 0 if null/empty
-          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
-          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
-          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
+          # Extract ignored CVEs from .snyk file
+          POLICY_PATH="${{ inputs.repo-path }}/.snyk"
+          IGNORED_CVES_JSON="[]"
+          if [ -f "$POLICY_PATH" ]; then
+            echo "🗂 Found .snyk file, extracting ignore list"
+            IGNORED_CVES_JSON=$(yq '.ignore | keys' "$POLICY_PATH" | jq -c)
+            echo "Ignored CVEs: $IGNORED_CVES_JSON"
+          else
+            echo "ℹ️ No .snyk file found, proceeding without ignore list"
+          fi
 
-          # 5. Handle findings
+          # Filter out ignored CVEs
+          jq --argjson ignored "$IGNORED_CVES_JSON" '
+            .vulnerabilities |= map(select(
+              (.identifiers.CVE | if type == "array" then .[] else empty end) as $cve
+              | $ignored | index($cve) | not
+            ))
+          ' sbom-result.json > sbom-result-filtered.json
+
+          echo "✓ Ignored CVEs filtered from results"
+
+          # Count filtered results
+          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result-filtered.json)
+          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result-filtered.json)
+          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result-filtered.json)
+
           if [[ $critical -gt 0 || $high -gt 0 ]]; then
             echo "----------------------------------------------------------------------"
             echo "                        VULNERABILITY DETAILS          "
@@ -168,7 +181,7 @@ jobs:
                       elif .semver.unaffected then "Use version: \(.semver.unaffected[0])" 
                       else "See: \(.url // "No fix info")" end)\n" +
                 "---"
-            ' sbom-result.json
+            ' sbom-result-filtered.json
 
             echo "::error::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
             echo "::error::│ CRITICAL SECURITY ISSUES DETECTED                   "
@@ -179,7 +192,7 @@ jobs:
             echo "::error::│ Review the detailed report above and either:        "
             echo "::error::│                                                     "
             echo "::error::│ 1. Fix Vulnerabilities                              "
-            echo "::error::│ 2. Add justified exceptions in .snyk policy file for unblocking the pipeline, consult Security   "
+            echo "::error::│ 2. Add justified exceptions in .snyk policy file for unblocking the pipeline"
             echo "::error::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
             exit 1
 
