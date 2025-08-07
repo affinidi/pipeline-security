@@ -107,7 +107,7 @@ jobs:
         run: |
           # 1. Generate and validate SBOM
           echo "----------------------------------------------------------------------"
-          if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
+          if ! cdxgen -t pub -o pub-sbom.json; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
               echo "::error::❌ SBOM generation failed completely"
