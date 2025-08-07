@@ -100,31 +100,27 @@ jobs:
         run: |
           dart pub get
 
-      - name: 🧪 Run SBOM Scan with Snyk
+      - name: 🧪 Run SBOM Scan and Check Vulnerabilities
         if: steps.detect.outputs.is_dart == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          # 1. Generate SBOM with verbose output
+          # 1. Generate and validate SBOM
           echo "Generating SBOM..."
           if ! cdxgen -t pub -o pub-sbom.json; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
               echo "::error::❌ SBOM generation failed completely"
               exit 1
-            else
-              echo "Found partial SBOM file, continuing..."
             fi
           fi
 
-          # 2. Verify SBOM file content
-          echo "Validating SBOM..."
           if ! jq empty pub-sbom.json; then
             echo "::error::❌ Invalid SBOM JSON"
             exit 1
           fi
 
-          # 3. Run Snyk scan with debug output
+          # 2. Run Snyk scan
           POLICY_PATH="${{ inputs.repo-path }}/.snyk"
           SNYK_COMMON_ARGS="--experimental --file pub-sbom.json --org=affinidi"
 
@@ -137,88 +133,67 @@ jobs:
             snyk sbom test $SNYK_COMMON_ARGS --json > sbom-result.json || SNYK_EXIT=$?
           fi
 
-          # 4. Handle Snyk results
-          if [ -n "$SNYK_EXIT" ]; then
-            echo "::warning::⚠️ Snyk exited with code $SNYK_EXIT"
-            
-            if [ -f "sbom-result.json" ]; then
-              echo "SBOM result file exists, checking content..."
-              if jq -e '.vulnerabilities' sbom-result.json >/dev/null; then
-                echo "Found vulnerabilities in results:"
-                jq '.vulnerabilities' sbom-result.json
-              else
-                echo "::error::❌ Unexpected Snyk output format"
-                cat sbom-result.json
-                exit 1
-              fi
-            else
-              echo "::error::❌ No sbom-result.json file was generated"
-              exit 1
-            fi
-          else
-            echo "✅ Snyk scan completed successfully"
+          # 3. Process results
+          if [ -n "$SNYK_EXIT" ] && [ ! -f "sbom-result.json" ]; then
+            echo "::error::❌ Snyk scan failed and no results file was generated"
+            exit 1
           fi
 
-      - name: 📋 Print Vulnerability Summary
-        if: steps.detect.outputs.is_dart == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        run: |
-          echo "::group::📊 Vulnerability Summary"
-          jq '
-            if ((.vulnerabilities? // []) | length) == 0 then
-              empty
-            else
-              .vulnerabilities
-              | group_by(.severity?)[]
-              | {
-                  severity: .[0].severity,
-                  issues: [.[] | {
-                    id: .id?,
-                    title: .title?,
-                    pkg: .packageName?,
-                    version: .version?
-                  }]
-                }
-              | (
-                  if .severity == "critical" then "\n🟣 CRITICAL SEVERITY"
-                  elif .severity == "high" then "\n🔴 HIGH SEVERITY"
-                  elif .severity == "medium" then "\n🟠 MEDIUM SEVERITY"
-                  elif .severity == "low" then "\n🟡 LOW SEVERITY"
-                  else "\n⚪ UNKNOWN SEVERITY"
-                  end
-                ) + "\n" +
-                (
-                  .issues[]
-                  | "\n- \(.title) [\(.id)]\n  📦 Package: \(.pkg)@\(.version)"
-                )
-            end
-          ' sbom-result.json || echo "✅ No vulnerabilities detected, Great job! 🎉"
+          # 4. Extract counts 
+          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json | tr -d '[]')
+          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json | tr -d '[]')
+          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json | tr -d '[]')
+          total=$(jq '[.vulnerabilities? // [] | length]' sbom-result.json | tr -d '[]')
+
+          # 5. Display beautiful vulnerability summary
+          echo "::group::📊 Security Scan Results"
+          echo "┌───────────────────────┬─────────┐"
+          echo "│ Vulnerability Severity │ Count   │"
+          echo "├───────────────────────┼─────────┤"
+          printf "│ ${PURPLE}Critical${NC}            │ %-7s │\n" "$critical"
+          printf "│ ${RED}High${NC}                │ %-7s │\n" "$high"
+          echo "│ Medium                │ $(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "medium")] | length' sbom-result.json | tr -d '[]') │"
+          echo "│ Low                   │ $(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "low")] | length' sbom-result.json | tr -d '[]') │"
+          echo "│ Unknown               │ $unknown │"
+          echo "├───────────────────────┼─────────┤"
+          echo "│ ${BOLD}Total${NC}                 │ ${BOLD}$total${NC} │"
+          echo "└───────────────────────┴─────────┘"
           echo "::endgroup::"
 
-      - name: ❌ Fail if Critical or High vulnerabilities
-        if: steps.detect.outputs.is_dart == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        run: |
-          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
-          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
-          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
-          total=$(jq '[.vulnerabilities? // [] | length]' sbom-result.json)
+          # 6. Detailed findings
+          if [[ $critical -gt 0 || $high -gt 0 ]]; then
+            echo "::group::🟣 Critical / 🔴 High Vulnerabilities"
+            jq -r '
+              .vulnerabilities[]
+              | select(.severity == "critical" or .severity == "high")
+              | "\(.severity | ascii_upcase) | \(.packageName)@\(.version)\n" +
+                "📛 Title: \(.title)\n" +
+                "🔗 CVE: \(.identifiers.CVE[0] // "None")\n" +
+                "⚠️ CVSS: \(.cvssScore // "?") (\(.CVSSv3 // "No vector"))\n" +
+                "💡 Fix: \(if .semver.patched then "Upgrade to \(.semver.patched[0])" 
+                       elif .semver.unaffected then "Use version: \(.semver.unaffected[0])" 
+                       else "See: \(.url // "No fix info")" end)\n" +
+                "---"
+            ' sbom-result.json
+            echo "::endgroup::"
+          fi
 
-          echo "----- Vulnerabilities Stats -------"
-          echo "Total vulnerabilities found: $total"
-          echo "Critical vulnerabilities: $critical"
-          echo "High vulnerabilities: $high"
-          echo "Unknown severity vulnerabilities: $unknown"
-
+          # 7. Fail conditions
           if [[ "$critical" -gt 0 || "$high" -gt 0 ]]; then
-            echo "::error::❌ Scan failed due to high-severity issues"
+            echo "::error::┌─────────────────────────────────────────────────────┐"
+            echo "::error::│ ${RED}${BOLD}CRITICAL SECURITY ISSUES DETECTED${NC}              │"
+            echo "::error::├─────────────────────────────────────────────────────┤"
+            echo "::error::│ 🟣 Critical vulnerabilities: $critical               │"
+            echo "::error::│ 🔴 High vulnerabilities: $high                      │"
+            echo "::error::│                                                     │"
+            echo "::error::│ Review the detailed report above and either:        │"
+            echo "::error::│                                                     │"
+            echo "::error::│ 1. Fix Vulnerabilities                              │"
+            echo "::error::│ 2. Add justified exceptions in .snyk policy file    │"
+            echo "::error::└─────────────────────────────────────────────────────┘"
             exit 1
           elif [[ "$unknown" -gt 0 ]]; then
             echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
-          else
-            echo "✅ No Critical (🟣) or High (🔴) vulnerabilities found. Great job! 🎉"
           fi
 
       - name: 🧹 Cleanup
