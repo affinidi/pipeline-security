@@ -107,7 +107,8 @@ jobs:
         run: |
           # 1. Generate and validate SBOM
           echo "----------------------------------------------------------------------"
-          if ! cdxgen -t pub -o pub-sbom.json; then
+          echo "Generating SBOM..."
+          if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
               echo "::error::❌ SBOM generation failed completely"
@@ -127,6 +128,7 @@ jobs:
           SNYK_COMMON_ARGS="--experimental --file pub-sbom.json --org=affinidi"
 
           echo "----------------------------------------------------------------------"
+          echo "Running Snyk SBOM scan..."
           SNYK_EXIT=0
           if [ -f "$POLICY_PATH" ]; then
             echo "NOTE : Using local .snyk policy file"
@@ -146,10 +148,9 @@ jobs:
           fi
 
           # 4. Extract counts 
-          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json | tr -d '[]')
-          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json | tr -d '[]')
-          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json | tr -d '[]')
-
+          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
+          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
+          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
 
           echo "----------------------------------------------------------------------"
           echo "                        VULNERABILITY DETAILS          "
@@ -158,8 +159,9 @@ jobs:
           # 5. Handle findings
           if [[ $critical -gt 0 || $high -gt 0 ]]; then
             jq -r '
-              .vulnerabilities[]
-              | select(.severity == "critical" or .severity == "high")
+              (.vulnerabilities // [])
+              | map(select(.severity == "critical" or .severity == "high"))
+              | .[]
               | "\(.severity | ascii_upcase) | \(.packageName)@\(.version)\n" +
                 "📛 Title: \(.title)\n" +
                 "🔗 CVE: \(.identifiers.CVE[0] // "None")\n" +
