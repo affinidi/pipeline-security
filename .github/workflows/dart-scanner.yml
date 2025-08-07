@@ -123,29 +123,32 @@ jobs:
             echo "::error::❌ Invalid SBOM JSON"
             exit 1
           fi
-          echo "📦 Generated SBOM"
 
           echo "----------------------------------------------------------------------"
-          echo "🔍 Running SBOM Scan"
+          echo "📦 Generated SBOM"
+
           SNYK_EXIT=0
-          snyk config set org=affinidi
-          snyk sbom test --experimental --file pub-sbom.json --json > sbom-result.json || SNYK_EXIT=$?
-          echo "✓ Scanning Finished"
+          snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json || SNYK_EXIT=$?
 
           if [[ "$SNYK_EXIT" -ne 0 ]] && [ ! -f "sbom-result.json" ]; then
             echo "::error::❌ Snyk scan failed and no results file was generated"
             exit 1
           fi
 
+          echo "----------------------------------------------------------------------"
+          echo "✓ Scanning Finished"
+
           # Extract ignored CVEs from .snyk file
           POLICY_PATH="${{ inputs.repo-path }}/.snyk"
           IGNORED_CVES_JSON="[]"
 
           if [ -f "$POLICY_PATH" ]; then
+            echo "----------------------------------------------------------------------"
             echo "🗂 Found .snyk file, extracting ignore list"
+            echo ""
             IGNORED_CVES_JSON=$(yq -o=json '.ignore | keys' "$POLICY_PATH" | jq -c)
-            echo "Ignored CVEs: $IGNORED_CVES_JSON"
           else
+            echo "----------------------------------------------------------------------"
             echo "ℹ️ No .snyk file found, proceeding without ignore list"
           fi
 
@@ -189,8 +192,8 @@ jobs:
             echo "::error::│                                                     "
             echo "::error::│ Review the detailed report above and either:        "
             echo "::error::│                                                     "
-            echo "::error::│ 1. Fix Vulnerabilities                              "
-            echo "::error::│ 2. Add justified exceptions in .snyk policy file for unblocking the pipeline"
+            echo "::error::│ 1. Fix Vulnerabilities OR                           "
+            echo "::error::│ 2. Consult Security incase of false positives / risk acceptance, update .snyk policy file accordingly"
             echo "::error::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
             exit 1
 
