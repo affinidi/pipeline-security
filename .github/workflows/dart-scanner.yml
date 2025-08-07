@@ -105,22 +105,58 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
+          # 1. Generate SBOM with verbose output
+          echo "Generating SBOM..."
           if ! cdxgen -t pub -o pub-sbom.json; then
-            echo "::warning::⚠️ cdxgen exited with error — check if SBOM is valid"
+            echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
-              echo "::error::❌ SBOM generation failed completely. Aborting."
+              echo "::error::❌ SBOM generation failed completely"
               exit 1
+            else
+              echo "Found partial SBOM file, continuing..."
             fi
           fi
 
-          POLICY_PATH="${{ inputs.repo-path }}/.snyk"
+          # 2. Verify SBOM file content
+          echo "Validating SBOM..."
+          if ! jq empty pub-sbom.json; then
+            echo "::error::❌ Invalid SBOM JSON"
+            exit 1
+          fi
 
+          # 3. Run Snyk scan with debug output
+          POLICY_PATH="${{ inputs.repo-path }}/.snyk"
+          SNYK_COMMON_ARGS="--experimental --file pub-sbom.json --org=affinidi"
+
+          echo "Running Snyk scan..."
           if [ -f "$POLICY_PATH" ]; then
-            echo "Using .snyk policy file from target repo"
-            snyk sbom test --experimental --file pub-sbom.json --org=affinidi --policy-path="$POLICY_PATH" --json > sbom-result.json
+            echo "Using .snyk policy file"
+            snyk sbom test $SNYK_COMMON_ARGS --policy-path="$POLICY_PATH" --json > sbom-result.json || SNYK_EXIT=$?
           else
-            echo "No .snyk policy file found in target repo, proceeding without it"
-            snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json
+            echo "No .snyk policy file found"
+            snyk sbom test $SNYK_COMMON_ARGS --json > sbom-result.json || SNYK_EXIT=$?
+          fi
+
+          # 4. Handle Snyk results
+          if [ -n "$SNYK_EXIT" ]; then
+            echo "::warning::⚠️ Snyk exited with code $SNYK_EXIT"
+            
+            if [ -f "sbom-result.json" ]; then
+              echo "SBOM result file exists, checking content..."
+              if jq -e '.vulnerabilities' sbom-result.json >/dev/null; then
+                echo "Found vulnerabilities in results:"
+                jq '.vulnerabilities' sbom-result.json
+              else
+                echo "::error::❌ Unexpected Snyk output format"
+                cat sbom-result.json
+                exit 1
+              fi
+            else
+              echo "::error::❌ No sbom-result.json file was generated"
+              exit 1
+            fi
+          else
+            echo "✅ Snyk scan completed successfully"
           fi
 
       - name: 📋 Print Vulnerability Summary
