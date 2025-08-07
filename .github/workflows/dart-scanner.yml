@@ -111,8 +111,6 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          echo "----------------------------------------------------------------------"
-          echo "📦 Generating SBOM with cdxgen"
           if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
@@ -125,10 +123,10 @@ jobs:
             echo "::error::❌ Invalid SBOM JSON"
             exit 1
           fi
-          echo "✓ Generated SBOM"
+          echo "📦 Generated SBOM"
 
           echo "----------------------------------------------------------------------"
-          echo "🔍 Running Snyk SBOM Scan"
+          echo "🔍 Running SBOM Scan"
           SNYK_EXIT=0
           snyk config set org=affinidi
           snyk sbom test --experimental --file pub-sbom.json --json > sbom-result.json || SNYK_EXIT=$?
@@ -142,19 +140,19 @@ jobs:
           # Extract ignored CVEs from .snyk file
           POLICY_PATH="${{ inputs.repo-path }}/.snyk"
           IGNORED_CVES_JSON="[]"
+
           if [ -f "$POLICY_PATH" ]; then
             echo "🗂 Found .snyk file, extracting ignore list"
-            IGNORED_CVES_JSON=$(yq '.ignore | keys' "$POLICY_PATH" | jq -c)
+            IGNORED_CVES_JSON=$(yq -o=json '.ignore | keys' "$POLICY_PATH" | jq -c)
             echo "Ignored CVEs: $IGNORED_CVES_JSON"
           else
             echo "ℹ️ No .snyk file found, proceeding without ignore list"
           fi
 
-          # Filter out ignored CVEs
+          # Filter out ignored CVEs from SBOM result
           jq --argjson ignored "$IGNORED_CVES_JSON" '
             .vulnerabilities |= map(select(
-              (.identifiers.CVE | if type == "array" then .[] else empty end) as $cve
-              | $ignored | index($cve) | not
+              (.identifiers.CVE // []) | all(. as $cve | $ignored | index($cve) | not)
             ))
           ' sbom-result.json > sbom-result-filtered.json
 
