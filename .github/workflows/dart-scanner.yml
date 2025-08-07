@@ -107,7 +107,6 @@ jobs:
         run: |
           # 1. Generate and validate SBOM
           echo "----------------------------------------------------------------------"
-          echo "Generating SBOM..."
           if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
@@ -147,10 +146,15 @@ jobs:
             exit 1
           fi
 
-          # 4. Extract counts 
-          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json)
-          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json)
-          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json)
+          # 4. Extract counts with fallback to 0 if null/empty
+          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result.json || echo 0)
+          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result.json || echo 0)
+          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result.json || echo 0)
+
+          # Ensure variables are numeric
+          critical=${critical:-0}
+          high=${high:-0}
+          unknown=${unknown:-0}
 
           echo "----------------------------------------------------------------------"
           echo "                        VULNERABILITY DETAILS          "
