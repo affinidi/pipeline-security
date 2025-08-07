@@ -106,8 +106,7 @@ jobs:
         shell: bash
         run: |
           # 1. Generate and validate SBOM
-          echo "----------------------------------------------"
-          echo "Generating SBOM"
+          echo "----------------------------------------------------------------------"
           if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
@@ -121,25 +120,24 @@ jobs:
             exit 1
           fi
 
+          echo "✓ Generated SBOM"
+
           # 2. Run Snyk scan
           POLICY_PATH="${{ inputs.repo-path }}/.snyk"
           SNYK_COMMON_ARGS="--experimental --file pub-sbom.json --org=affinidi"
 
-          echo "----------------------------------------------"
-          echo "Scanning..." 
-          echo "----------------------------------------------"
+          echo "----------------------------------------------------------------------"
           SNYK_EXIT=0
           if [ -f "$POLICY_PATH" ]; then
-            echo "----------------------------------------------"
             echo "NOTE : Using local .snyk policy file"
-            echo "----------------------------------------------"
             snyk sbom test $SNYK_COMMON_ARGS --policy-path="$POLICY_PATH" --json > sbom-result.json || SNYK_EXIT=$?
           else
-            echo "----------------------------------------------"
             echo "NOTE : .snyk policy file not found"
-            echo "----------------------------------------------"
             snyk sbom test $SNYK_COMMON_ARGS --json > sbom-result.json || SNYK_EXIT=$?
           fi
+
+          echo "----------------------------------------------------------------------"
+          echo "✓ Scanning Finished"
 
           # 3. Process results
           if [[ "$SNYK_EXIT" -ne 0 ]] && [ ! -f "sbom-result.json" ]; then
@@ -154,9 +152,9 @@ jobs:
 
           # 6. Detailed findings
           if [[ $critical -gt 0 || $high -gt 0 ]]; then
-            echo "----------------------------------------------"
-            echo "              VULNERABILITY DETAILS.          "
-            echo "----------------------------------------------"
+            echo "----------------------------------------------------------------------"
+            echo "                        VULNERABILITY DETAILS.          "
+            echo "----------------------------------------------------------------------"
             jq -r '
               .vulnerabilities[]
               | select(.severity == "critical" or .severity == "high")
