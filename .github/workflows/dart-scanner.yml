@@ -111,6 +111,7 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
+          # Generate SBOM
           if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
@@ -119,7 +120,7 @@ jobs:
             fi
           fi
 
-          if ! jq empty pub-sbom.json; then
+          if ! jq empty pub-sbom.json 2>/dev/null; then
             echo "::error::❌ Invalid SBOM JSON"
             exit 1
           fi
@@ -127,6 +128,7 @@ jobs:
           echo "----------------------------------------------------------------------"
           echo "📦 Generated SBOM"
 
+          # Run Snyk SBOM test
           SNYK_EXIT=0
           snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json || SNYK_EXIT=$?
 
@@ -138,37 +140,61 @@ jobs:
           echo "----------------------------------------------------------------------"
           echo "✓ Scanning Finished"
 
-          # Extract ignored CVEs from .snyk file
-          POLICY_PATH="${{ inputs.repo-path }}/.snyk"
-          IGNORED_CVES_JSON="[]"
+          # Local & global policy paths
+          LOCAL_POLICY="${{ inputs.repo-path }}/.snyk"
+          GLOBAL_POLICY_PATH="./.snyk-global"
+          LOCAL_IGNORES="[]"
+          GLOBAL_IGNORES="[]"
 
-           if [ -f "$POLICY_PATH" ]; then
+          # Extract ignores function (sorted by year + number)
+          extract_ignores() {
+            local file=$1
+            if [ -f "$file" ]; then
+              yq -o=json '.ignore | keys' "$file" \
+                | jq -r '.[]' \
+                | sort -t'-' -k2,2n -k3,3n \
+                | tr '[:lower:]' '[:upper:]'
+            fi
+          }
+
+          # Local ignores
+          if [ -f "$LOCAL_POLICY" ]; then
+            LOCAL_IGNORES=$(extract_ignores "$LOCAL_POLICY")
             echo "----------------------------------------------------------------------"
-            echo "🗂 Found .snyk file, extracting ignore list"
-            
-            # Extract CVE keys as plain list, then sort numerically by year and number
-            IGNORED_CVES=$(yq -o=json '.ignore | keys' "$POLICY_PATH" \
-              | jq -r '.[]' \
-              | sort -t'-' -k2,2n -k3,3n)
-
-            # Normalize to uppercase and prepare JSON array for filtering
-            IGNORED_CVES_JSON=$(printf '%s\n' "$IGNORED_CVES" | tr '[:lower:]' '[:upper:]' | jq -R . | jq -s .)
-
-            # Display list
-            COUNT=$(echo "$IGNORED_CVES" | wc -l | xargs)
-            echo "----------------------------------------------------------------------"
-            echo "Ignoring $COUNT CVE(s) (from .snyk):"
-            echo ""
+            echo "🗂 Found local .snyk file, ignoring $(echo "$LOCAL_IGNORES" | wc -l | xargs) CVE(s)"
             i=1
             while IFS= read -r cve; do
               echo "  $i) $cve"
               i=$((i+1))
-            done <<< "$IGNORED_CVES"
-
+            done <<< "$LOCAL_IGNORES"
           else
             echo "----------------------------------------------------------------------"
-            echo "ℹ️ No .snyk file found, proceeding without ignore list"
+            echo "ℹ️ No local .snyk file found"
           fi
+
+          # Global policy fetch
+          if ! [ -f "$GLOBAL_POLICY_PATH" ] && [ -n "$SNYK_GLOBAL_POLICY" ]; then
+            echo "Fetching global Snyk policy from $SNYK_GLOBAL_POLICY..."
+            curl -sSL "$SNYK_GLOBAL_POLICY" -o "$GLOBAL_POLICY_PATH" || echo "⚠️ Failed to fetch global policy"
+          fi
+
+          if [ -f "$GLOBAL_POLICY_PATH" ]; then
+            GLOBAL_IGNORES=$(extract_ignores "$GLOBAL_POLICY_PATH")
+            echo "----------------------------------------------------------------------"
+            echo "🗂 Found global .snyk-global file, ignoring $(echo "$GLOBAL_IGNORES" | wc -l | xargs) CVE(s)"
+            i=1
+            while IFS= read -r cve; do
+              echo "  $i) $cve"
+              i=$((i+1))
+            done <<< "$GLOBAL_IGNORES"
+          else
+            echo "----------------------------------------------------------------------"
+            echo "ℹ️ No global .snyk-global file available"
+          fi
+
+          # Merge for filtering (allow duplicates)
+          IGNORED_CVES=$(printf "%s\n%s\n" "$LOCAL_IGNORES" "$GLOBAL_IGNORES")
+          IGNORED_CVES_JSON=$(printf '%s\n' "$IGNORED_CVES" | jq -R . | jq -s .)
 
           # Normalize CVEs in SBOM to uppercase
           jq '
@@ -181,7 +207,7 @@ jobs:
             )
           ' sbom-result.json > sbom-result-normalized.json
 
-          # Filter out ignored CVEs from SBOM result
+          # Filter out ignored CVEs
           jq --argjson ignored "$IGNORED_CVES_JSON" '
             .vulnerabilities |= map(select(
               (.identifiers.CVE // []) | all(. as $cve | $ignored | index($cve) | not)
@@ -220,7 +246,7 @@ jobs:
             echo "::error::│ Review the detailed report above and either:        "
             echo "::error::│                                                     "
             echo "::error::│ 1. Fix Vulnerabilities OR                           "
-            echo "::error::│ 2. Consult Security incase of false positives / risk acceptance, update .snyk policy file accordingly"
+            echo "::error::│ 2. Consult Security in case of false positives / risk acceptance, update .snyk policy file accordingly"
             echo "::error::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
             exit 1
 
@@ -237,7 +263,8 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          rm -f pub-sbom.json sbom-result.json sbom-result-normalized.json sbom-result-filtered.json
+          rm -f pub-sbom.json sbom-result.json sbom-result-normalized.json sbom-result-filtered.json .snyk-global
+
 
       - name: ℹ️ Skip if not a Dart/Flutter project
         if: steps.detect.outputs.is_dart != 'true'

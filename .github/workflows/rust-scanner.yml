@@ -199,36 +199,67 @@ jobs:
           echo "----------------------------------------------------------------------"
           echo "✓ Scanning Finished"
 
-          # Extract ignored CVEs from .snyk file
-          POLICY_PATH="${{ inputs.repo-path }}/.snyk"
-          IGNORED_CVES_JSON="[]"
+          # Extract ignored CVEs from local and global policies
+          LOCAL_POLICY="${{ inputs.repo-path }}/.snyk"
+          LOCAL_IGNORES="[]"
+          GLOBAL_POLICY_PATH="./.snyk-global"
+          GLOBAL_IGNORES="[]"
 
-          if [ -f "$POLICY_PATH" ]; then
-            echo "----------------------------------------------------------------------"
-            echo "🗂 Found .snyk file, extracting ignore list"
-            
-            # Extract CVE keys as plain list, then sort numerically by year and number
-            IGNORED_CVES=$(yq -o=json '.ignore | keys' "$POLICY_PATH" \
+          # Check local policy
+          if [ -f "$LOCAL_POLICY" ]; then
+            LOCAL_IGNORES=$(yq -o=json '.ignore | keys' "$LOCAL_POLICY" \
               | jq -r '.[]' \
-              | sort -t'-' -k2,2n -k3,3n)
-
-            # Normalize to uppercase and prepare JSON array for filtering
-            IGNORED_CVES_JSON=$(printf '%s\n' "$IGNORED_CVES" | tr '[:lower:]' '[:upper:]' | jq -R . | jq -s .)
-
-            # Display list
-            COUNT=$(echo "$IGNORED_CVES" | wc -l | xargs)
+              | sort -t'-' -k2,2n -k3,3n \
+              | tr '[:lower:]' '[:upper:]' \
+              | jq -R . | jq -s .)
             echo "----------------------------------------------------------------------"
-            echo "Ignoring $COUNT CVE(s) (from .snyk):"
-            echo ""
-            i=1
-            while IFS= read -r cve; do
-              echo "  $i) $cve"
-              i=$((i+1))
-            done <<< "$IGNORED_CVES"
-
+            echo "🗂 Found local .snyk file, ignoring ${#LOCAL_IGNORES[@]} CVE(s)"
           else
             echo "----------------------------------------------------------------------"
-            echo "ℹ️ No .snyk file found, proceeding without ignore list"
+            echo "ℹ️ No local .snyk file found"
+          fi
+
+          # Check global policy
+          if ! [ -f "$GLOBAL_POLICY_PATH" ]; then
+            if [ -n "$SNYK_GLOBAL_POLICY" ]; then
+              echo "Fetching global Snyk policy from $SNYK_GLOBAL_POLICY..."
+              curl -sSL "$SNYK_GLOBAL_POLICY" -o "$GLOBAL_POLICY_PATH" || echo "⚠️ Failed to fetch global policy"
+            fi
+          fi
+
+          if [ -f "$GLOBAL_POLICY_PATH" ]; then
+            GLOBAL_IGNORES=$(yq -o=json '.ignore | keys' "$GLOBAL_POLICY_PATH" \
+              | jq -r '.[]' \
+              | sort -t'-' -k2,2n -k3,3n \
+              | tr '[:lower:]' '[:upper:]' \
+              | jq -R . | jq -s .)
+            echo "----------------------------------------------------------------------"
+            echo "🗂 Found global .snyk-global file, ignoring ${#GLOBAL_IGNORES[@]} CVE(s)"
+          else
+            echo "----------------------------------------------------------------------"
+            echo "ℹ️ No global .snyk-global file available"
+          fi
+
+          # Merge for filtering
+          IGNORED_CVES_JSON=$(jq -n --argjson local "$LOCAL_IGNORES" --argjson global "$GLOBAL_IGNORES" '$local + $global')
+
+          # Display ignored CVEs separately
+          if [ "$LOCAL_IGNORES" != "[]" ]; then
+            echo "Ignoring CVEs from local .snyk:"
+            i=1
+            for cve in $(echo "$LOCAL_IGNORES" | jq -r '.[]'); do
+              echo "  $i) $cve"
+              i=$((i+1))
+            done
+          fi
+
+          if [ "$GLOBAL_IGNORES" != "[]" ]; then
+            echo "Ignoring CVEs from global .snyk-global:"
+            i=1
+            for cve in $(echo "$GLOBAL_IGNORES" | jq -r '.[]'); do
+              echo "  $i) $cve"
+              i=$((i+1))
+            done
           fi
 
           # Combine all results
