@@ -12,7 +12,7 @@ In your repo, ensure that you add the following code snippet to call the securit
 ````
  jobs:
   call-security-scanners-workflow:
-    uses: affinidi/pipeline-security/.github/workflows/security-scanners.yml
+    uses: affinidi/pipeline-security/.github/workflows/security-scanners.yml@main
     with:
         config-path: .github/labeler.yml
     secrets: inherit    
@@ -60,7 +60,7 @@ For enabling dart-scanner, add the following code snippet to .github/workflows/o
 
   jobs:
     dart-security-scan:
-      uses: affinidi/pipeline-security/.github/workflows/dart-scanner@main
+      uses: affinidi/pipeline-security/.github/workflows/dart-scanner.yml@main
       secrets: inherit
 ````
 
@@ -88,7 +88,7 @@ For enabling rust-scanner, add the following code snippet to .github/workflows/o
 
   jobs:
     rust-security-scan:
-      uses: affinidi/pipeline-security/.github/workflows/rust-scanner@main
+      uses: affinidi/pipeline-security/.github/workflows/rust-scanner.yml@main
       secrets: inherit
 ````
 
