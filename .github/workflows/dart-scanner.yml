@@ -173,7 +173,7 @@ jobs:
           fi
 
           # Global policy fetch
-          if ! [ -f "$GLOBAL_POLICY_PATH" ] && [ -n "$SNYK_GLOBAL_POLICY" ]; then
+          if [ -n "$SNYK_GLOBAL_POLICY" ]; then
             echo "Fetching global Snyk policy from $SNYK_GLOBAL_POLICY..."
             curl -sSL "$SNYK_GLOBAL_POLICY" -o "$GLOBAL_POLICY_PATH" || echo "⚠️ Failed to fetch global policy"
           fi
