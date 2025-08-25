@@ -237,7 +237,7 @@ jobs:
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          rm -f pub-sbom.json sbom-result.json
+          rm -f pub-sbom.json sbom-result.json sbom-result-normalized.json sbom-result-filtered.json
 
       - name: ℹ️ Skip if not a Dart/Flutter project
         if: steps.detect.outputs.is_dart != 'true'

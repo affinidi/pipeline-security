@@ -165,7 +165,7 @@ jobs:
             exit 1
           fi
 
-      - name: 📊 Unified Vulnerability Scan and Check
+      - name: 🧪 Run SBOM Scan and Check Vulnerability
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
