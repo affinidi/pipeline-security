@@ -68,6 +68,7 @@ Ensure the following secrets are available in your repo:
 
   - SNYK_SCANNER_TOKEN
   - SNYK_SCANNER_REGION
+  - SNYK_GLOBAL_POLICY
 
 For enabling rust-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
 
@@ -92,7 +93,8 @@ For enabling rust-scanner, add the following code snippet to .github/workflows/o
       secrets: inherit
 ````
 
-Ensure the following secrets are available in your repo:
+Ensure the following secrets are available in your GitHub org or at repo:
 
   - SNYK_SCANNER_TOKEN
   - SNYK_SCANNER_REGION
+  - SNYK_GLOBAL_POLICY

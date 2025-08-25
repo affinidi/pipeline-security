@@ -14,6 +14,8 @@ on:
         required: true
       SNYK_SCANNER_REGION:
         required: true
+      SNYK_GLOBAL_POLICY:
+        required: true
 
 jobs:
   rust-scan:
@@ -169,6 +171,8 @@ jobs:
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
+        env: 
+          SNYK_GLOBAL_POLICY: ${{ secrets.SNYK_GLOBAL_POLICY }}
         run: |
           # Generate SBOM
           if ! cargo cyclonedx --format json > cargo-sbom.json 2>/dev/null; then
