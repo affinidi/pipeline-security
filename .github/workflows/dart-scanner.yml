@@ -145,9 +145,23 @@ jobs:
           if [ -f "$POLICY_PATH" ]; then
             echo "----------------------------------------------------------------------"
             echo "🗂 Found .snyk file, extracting ignore list"
-            IGNORED_CVES_JSON=$(yq -o=json '.ignore | keys' "$POLICY_PATH" | jq -c)
+            
+            # Extract CVE keys as plain list, then sort numerically by year and number
+            IGNORED_CVES=$(yq -o=json '.ignore | keys' "$POLICY_PATH" \
+              | jq -r '.[]' \
+              | sort -t'-' -k2,2n -k3,3n)
+
+            COUNT=$(echo "$IGNORED_CVES" | wc -l | xargs)
+            
             echo "----------------------------------------------------------------------"
-            echo "Ignoring CVEs (from .snyk): $IGNORED_CVES_JSON"
+            echo "Ignoring $COUNT CVE(s) (from .snyk):"
+            echo ""   # 👈 extra blank line before the list
+            
+            i=1
+            while IFS= read -r cve; do
+              echo "  $i) $cve"
+              i=$((i+1))
+            done <<< "$IGNORED_CVES"
           else
             echo "----------------------------------------------------------------------"
             echo "ℹ️ No .snyk file found, proceeding without ignore list"
