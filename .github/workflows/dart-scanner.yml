@@ -142,7 +142,7 @@ jobs:
           POLICY_PATH="${{ inputs.repo-path }}/.snyk"
           IGNORED_CVES_JSON="[]"
 
-          if [ -f "$POLICY_PATH" ]; then
+           if [ -f "$POLICY_PATH" ]; then
             echo "----------------------------------------------------------------------"
             echo "🗂 Found .snyk file, extracting ignore list"
             
@@ -151,28 +151,42 @@ jobs:
               | jq -r '.[]' \
               | sort -t'-' -k2,2n -k3,3n)
 
+            # Normalize to uppercase and prepare JSON array for filtering
+            IGNORED_CVES_JSON=$(printf '%s\n' "$IGNORED_CVES" | tr '[:lower:]' '[:upper:]' | jq -R . | jq -s .)
+
+            # Display list
             COUNT=$(echo "$IGNORED_CVES" | wc -l | xargs)
-            
             echo "----------------------------------------------------------------------"
             echo "Ignoring $COUNT CVE(s) (from .snyk):"
-            echo ""   # 👈 extra blank line before the list
-            
+            echo ""
             i=1
             while IFS= read -r cve; do
               echo "  $i) $cve"
               i=$((i+1))
             done <<< "$IGNORED_CVES"
+
           else
             echo "----------------------------------------------------------------------"
             echo "ℹ️ No .snyk file found, proceeding without ignore list"
           fi
+
+          # Normalize CVEs in SBOM to uppercase
+          jq '
+            .vulnerabilities |= map(
+              if .identifiers.CVE then
+                .identifiers.CVE |= map(ascii_upcase)
+              else
+                .
+              end
+            )
+          ' sbom-result.json > sbom-result-normalized.json
 
           # Filter out ignored CVEs from SBOM result
           jq --argjson ignored "$IGNORED_CVES_JSON" '
             .vulnerabilities |= map(select(
               (.identifiers.CVE // []) | all(. as $cve | $ignored | index($cve) | not)
             ))
-          ' sbom-result.json > sbom-result-filtered.json
+          ' sbom-result-normalized.json > sbom-result-filtered.json
 
           # Count filtered results
           critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result-filtered.json)
