@@ -116,9 +116,6 @@ If the CVE is **specific to your repository**, create or update a `.snyk` file a
 # Authenticate with Snyk CLI first
 snyk auth $SNYK_SCANNER_TOKEN
 
-# Generate a .snyk policy file (if it doesn't exist)
-snyk policy
-
 # Add an ignore for the CVE
 snyk ignore --id=CVE-2024-12345 --expiry=2025-12-31 --reason="Planned upgrade in Q4"
 ```
