@@ -137,18 +137,18 @@ jobs:
         shell: bash
         run: |
           echo "Running cargo audit..."
-          if ! cargo audit --json > audit-result.json 2>/dev/null; then
-            echo "::warning::⚠️ cargo audit exited with error — checking audit validity"
-            if [ ! -s audit-result.json ]; then
-              echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > audit-result.json
-            fi
+          cargo audit --json > audit-result.json || true
+
+          if [ ! -s audit-result.json ]; then
+            echo "::warning::⚠️ cargo audit produced no output, generating empty result"
+            echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > audit-result.json
           fi
 
-          if ! jq empty audit-result.json 2>/dev/null; then
+          if ! jq empty audit-result.json; then
             echo "::error::❌ Invalid Cargo Audit JSON"
             exit 1
           fi
-
+          
       - name: 🔎 Snyk Code Test
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
