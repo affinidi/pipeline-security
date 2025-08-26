@@ -104,17 +104,18 @@ Ensure the following secrets are available in your GitHub org or at repo:
 ## Unblocking Vulnerabilities
 
 The scanners use [Snyk](https://snyk.io) under the hood to detect vulnerabilities.  
+
 Sometimes, you may need to **ignore specific CVEs** in order to unblock a pipeline while remediation is planned.  
 
 There are two supported ways to do this:
 
-### 1. Local Ignore (per-repo)
+### 1. Local Ignore ( per repository )
 
 If the CVE is **specific to your repository**, create or update a `.snyk` file at the root of your repo:
 
 ```bash
 # Authenticate with Snyk CLI first
-snyk auth $SNYK_SCANNER_TOKEN
+snyk auth $YOUR_SYNK_TOKEN
 
 # Add an ignore for the CVE
 snyk ignore --id=CVE-2024-12345 --expiry=2025-12-31 --reason="Planned upgrade in Q4"
@@ -125,18 +126,19 @@ This will add an entry like the following to your `.snyk` file:
 ```yaml
 ignore:
   "CVE-2024-12345":
-    - reason: Planned upgrade in Q4
-      expires: 2025-12-31T23:59:59.000Z
-      created: 2025-08-25T10:00:00.000Z
+    - '*':
+        reason: Planned upgrade in Q4
+        expires: 2025-12-31T00:00:00.000Z
+        created: 2025-08-26T07:35:47.825Z
 ```
 
 > ℹ️ Local ignores apply **only to your repository** and are version-controlled.
 
 ---
 
-### 2. Global Ignore (shared across repos)
+### 2. Global Ignore ( shared across repos )
 
-If the CVE affects **many projects**, update the global `.snyk-global` policy file in the [`pipeline-security`](https://github.com/affinidi/pipeline-security) repository.
+If the CVE affects **many projects**, update the global `.snyk-global` policy file in this repository [`pipeline-security`](https://github.com/affinidi/pipeline-security).
 
 Steps:
 1. Edit the [`.snyk-global`](./.snyk-global) file in this repo.
@@ -148,9 +150,10 @@ Example entry in `.snyk-global`:
 ```yaml
 ignore:
   "CVE-2024-56789":
-    - reason: Affects multiple Rust crates, fix pending from upstream
-      expires: 2026-01-15T23:59:59.000Z
-      created: 2025-08-25T10:30:00.000Z
+    - '*':
+        reason: Affects multiple Rust crates, fix pending from upstream
+        expires: 2026-01-15T23:59:59.000Z
+        created: 2025-08-25T10:30:00.000Z
 ```
 
 Once merged, the global policy will be automatically fetched by both dart and rust scanners in future runs.
