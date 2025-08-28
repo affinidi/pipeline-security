@@ -216,9 +216,13 @@ jobs:
               | sort -t'-' -k2,2n -k3,3n \
               | tr '[:lower:]' '[:upper:]' \
               | jq -R . | jq -s .)
+
+            LOCAL_COUNT=$(echo "$LOCAL_IGNORES" | jq 'length')
+
             echo "----------------------------------------------------------------------"
-            echo "🗂 Found local .snyk file, ignoring ${#LOCAL_IGNORES[@]} CVE(s)"
+            echo "🗂 Found local .snyk file, ignoring $LOCAL_COUNT CVE(s)"
           else
+            LOCAL_IGNORES="[]"
             echo "----------------------------------------------------------------------"
             echo "ℹ️ No local .snyk file found"
           fi
@@ -234,9 +238,13 @@ jobs:
               | sort -t'-' -k2,2n -k3,3n \
               | tr '[:lower:]' '[:upper:]' \
               | jq -R . | jq -s .)
+
+            GLOBAL_COUNT=$(echo "$GLOBAL_IGNORES" | jq 'length')
+
             echo "----------------------------------------------------------------------"
-            echo "🗂 Found global .snyk-global file, ignoring ${#GLOBAL_IGNORES[@]} CVE(s)"
+            echo "🗂 Found global .snyk-global file, ignoring $GLOBAL_COUNT CVE(s)"
           else
+            GLOBAL_IGNORES="[]"
             echo "----------------------------------------------------------------------"
             echo "ℹ️ No global .snyk-global file available"
           fi
