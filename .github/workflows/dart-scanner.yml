@@ -144,33 +144,38 @@ jobs:
           echo "----------------------------------------------------------------------"
           echo "✓ Scanning Finished"
 
-          # Local & global policy paths
+          # Extract ignored CVEs from local and global policies
           LOCAL_POLICY="${{ inputs.repo-path }}/.snyk"
-          GLOBAL_POLICY_PATH="./.snyk-global"
           LOCAL_IGNORES="[]"
+          GLOBAL_POLICY_PATH="./.snyk-global"
           GLOBAL_IGNORES="[]"
 
-          # Extract ignores function (sorted by year + number)
+          # Extract ignores as proper JSON array (sorted by year + number)
           extract_ignores() {
             local file=$1
             if [ -f "$file" ]; then
               yq -o=json '.ignore | keys' "$file" \
                 | jq -r '.[]' \
                 | sort -t'-' -k2,2n -k3,3n \
-                | tr '[:lower:]' '[:upper:]'
+                | tr '[:lower:]' '[:upper:]' \
+                | jq -R . | jq -s .
+            else
+              echo "[]"
             fi
           }
 
-          # Local ignores
+          # Check local policy
           if [ -f "$LOCAL_POLICY" ]; then
             LOCAL_IGNORES=$(extract_ignores "$LOCAL_POLICY")
+            LOCAL_COUNT=$(echo "$LOCAL_IGNORES" | jq 'length')
+
             echo "----------------------------------------------------------------------"
-            echo "🗂 Found local .snyk file, ignoring $(echo "$LOCAL_IGNORES" | wc -l | xargs) CVE(s)"
+            echo "🗂 Found local .snyk file, ignoring $LOCAL_COUNT CVE(s)"
             i=1
-            while IFS= read -r cve; do
+            for cve in $(echo "$LOCAL_IGNORES" | jq -r '.[]'); do
               echo "  $i) $cve"
               i=$((i+1))
-            done <<< "$LOCAL_IGNORES"
+            done
           else
             echo "----------------------------------------------------------------------"
             echo "ℹ️ No local .snyk file found"
@@ -183,23 +188,24 @@ jobs:
 
           if [ -f "$GLOBAL_POLICY_PATH" ]; then
             GLOBAL_IGNORES=$(extract_ignores "$GLOBAL_POLICY_PATH")
+            GLOBAL_COUNT=$(echo "$GLOBAL_IGNORES" | jq 'length')
+
             echo "----------------------------------------------------------------------"
-            echo "🗂 Found global .snyk-global file, ignoring $(echo "$GLOBAL_IGNORES" | wc -l | xargs) CVE(s)"
+            echo "🗂 Found global .snyk-global file, ignoring $GLOBAL_COUNT CVE(s)"
             i=1
-            while IFS= read -r cve; do
+            for cve in $(echo "$GLOBAL_IGNORES" | jq -r '.[]'); do
               echo "  $i) $cve"
               i=$((i+1))
-            done <<< "$GLOBAL_IGNORES"
+            done
           else
             echo "----------------------------------------------------------------------"
             echo "ℹ️ No global .snyk-global file available"
           fi
 
-          # Merge for filtering (allow duplicates)
-          IGNORED_CVES=$(printf "%s\n%s\n" "$LOCAL_IGNORES" "$GLOBAL_IGNORES")
-          IGNORED_CVES_JSON=$(printf '%s\n' "$IGNORED_CVES" | jq -R . | jq -s .)
+          # Merge for filtering
+          IGNORED_CVES_JSON=$(jq -n --argjson local "$LOCAL_IGNORES" --argjson global "$GLOBAL_IGNORES" '$local + $global')
 
-          # Normalize CVEs in SBOM to uppercase
+          # Normalize CVEs in SBOM to uppercase and filter ignored ones
           jq '
             .vulnerabilities |= map(
               if .identifiers.CVE then
@@ -207,20 +213,15 @@ jobs:
               else
                 .
               end
-            )
-          ' sbom-result.json > sbom-result-normalized.json
-
-          # Filter out ignored CVEs
-          jq --argjson ignored "$IGNORED_CVES_JSON" '
-            .vulnerabilities |= map(select(
+            ) | .vulnerabilities |= map(select(
               (.identifiers.CVE // []) | all(. as $cve | $ignored | index($cve) | not)
             ))
-          ' sbom-result-normalized.json > sbom-result-filtered.json
+          ' --argjson ignored "$IGNORED_CVES_JSON" sbom-result.json > sbom-result-filtered.json
 
           # Count filtered results
-          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "critical")] | length' sbom-result-filtered.json)
-          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "high")] | length' sbom-result-filtered.json)
-          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity? == "unknown")] | length' sbom-result-filtered.json)
+          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity=="critical")] | length' sbom-result-filtered.json)
+          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity=="high")] | length' sbom-result-filtered.json)
+          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity=="unknown")] | length' sbom-result-filtered.json)
 
           if [[ $critical -gt 0 || $high -gt 0 ]]; then
             echo "----------------------------------------------------------------------"
