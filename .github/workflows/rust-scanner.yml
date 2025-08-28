@@ -101,7 +101,7 @@ jobs:
             cargo install cargo-audit
           fi
 
-      - name: 📦 Install required npm tools if not present
+      - name: 📦 Install required tools
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
         run: |
@@ -148,7 +148,7 @@ jobs:
             echo "::error::❌ Invalid Cargo Audit JSON"
             exit 1
           fi
-          
+
       - name: 🔎 Snyk Code Test
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}

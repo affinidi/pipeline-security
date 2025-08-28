@@ -70,7 +70,7 @@ jobs:
           path: ~/.npm-global
           key: ${{ runner.os }}-npm-tools-v1
 
-      - name: 📦 Install required npm tools if not present
+      - name: 📦 Install required tools
         if: steps.detect.outputs.is_dart == 'true'
         shell: bash
         run: |
