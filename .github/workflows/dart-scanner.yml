@@ -57,8 +57,7 @@ jobs:
         if: steps.detect.outputs.is_dart == 'true'
         uses: flutter-actions/setup-flutter@v3
         with:
-          version: ${{ inputs.flutter-version != 'stable' && inputs.flutter-version || '' }}
-          channel: stable
+          version: ${{ inputs.flutter-version }}
           cache: true
           cache-sdk: true
 
