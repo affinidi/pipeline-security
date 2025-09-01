@@ -52,7 +52,7 @@ jobs:
             echo "is_dart=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: 🧰 Set up Flutter SDK (specific version)
+      - name: 🧰 Set up Flutter SDK (specific version if provided)
         if: steps.detect.outputs.is_dart == 'true' && inputs.flutter-version != ''
         uses: flutter-actions/setup-flutter@v3
         with:
@@ -60,7 +60,7 @@ jobs:
           cache: true
           cache-sdk: true
 
-      - name: 🧰 Set up Flutter SDK (stable channel)
+      - name: 🧰 Set up Flutter SDK (else stable channel)
         if: steps.detect.outputs.is_dart == 'true' && (inputs.flutter-version == '' || inputs.flutter-version == null)
         uses: flutter-actions/setup-flutter@v3
         with:
