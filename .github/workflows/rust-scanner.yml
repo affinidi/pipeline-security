@@ -209,15 +209,23 @@ jobs:
           GLOBAL_POLICY_PATH="./.snyk-global"
           GLOBAL_IGNORES="[]"
 
-          # Extract ignores function (sorted by year + number)
+          # Extract ignores as proper JSON array (sorted by year + number)
           extract_ignores() {
             local file=$1
-            if [ -f "$file" ]; then
-              yq -o=json '.ignore | keys' "$file" \
-                | jq -r '.[]' \
-                | sort -t'-' -k2,2n -k3,3n \
-                | tr '[:lower:]' '[:upper:]' \
-                | jq -R . | jq -s .
+            
+            # Return empty array if file doesn't exist
+            if [ ! -f "$file" ]; then
+              echo "[]"
+              return
+            fi
+            
+            # Get ignore keys, handling empty objects gracefully
+            local cve_list
+            cve_list=$(yq '.ignore | keys | .[]' "$file" 2>/dev/null | tr '[:lower:]' '[:upper:]' | sort -t'-' -k2,2n -k3,3n)
+            
+            # Convert to JSON array
+            if [ -n "$cve_list" ]; then
+              echo "$cve_list" | jq -R . | jq -s .
             else
               echo "[]"
             fi
