@@ -11,7 +11,6 @@ on:
       flutter-version:
         description: 'Flutter SDK version'
         required: false
-        default: 'stable'
         type: string
 
     secrets:
