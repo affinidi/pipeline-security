@@ -18,7 +18,7 @@ In your repo, ensure that you add the following code snippet to call the securit
     secrets: inherit    
 ````
 
-For enabling wizcli-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+For enabling wizcli-scanner, add the following code snippet to .github/workflows/checks.yaml and .github/workflows/release.yaml  in your repo:
 
 ````
   # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
@@ -41,7 +41,7 @@ For enabling wizcli-scanner, add the following code snippet to .github/workflows
       secrets: inherit
 ````
 
-For enabling dart-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+For enabling dart-scanner, add the following code snippet to .github/workflows/checks.yaml and .github/workflows/release.yaml  in your repo:
 
 ````
   # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
@@ -70,7 +70,7 @@ Ensure the following secrets are available in your GitHub org or at repo:
   - SNYK_SCANNER_REGION
   - SNYK_GLOBAL_POLICY
 
-For enabling rust-scanner, add the following code snippet to .github/workflows/on-push.yaml in your repo:
+For enabling rust-scanner, add the following code snippet to .github/workflows/checks.yaml and .github/workflows/release.yaml  in your repo:
 
 ````
   # Run pipeline in context of branch, but with action config from main for opened and rebased mr's
