@@ -11,7 +11,6 @@ on:
       flutter-version:
         description: 'Flutter SDK version'
         required: false
-        default: 'stable'
         type: string
 
     secrets:
@@ -53,11 +52,18 @@ jobs:
             echo "is_dart=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: 🧰 Set up Flutter SDK
-        if: steps.detect.outputs.is_dart == 'true'
+      - name: 🧰 Set up Flutter SDK (specific version if provided)
+        if: steps.detect.outputs.is_dart == 'true' && inputs.flutter-version != ''
         uses: flutter-actions/setup-flutter@v3
         with:
           version: ${{ inputs.flutter-version }}
+          cache: true
+          cache-sdk: true
+
+      - name: 🧰 Set up Flutter SDK (else stable channel)
+        if: steps.detect.outputs.is_dart == 'true' && (inputs.flutter-version == '' || inputs.flutter-version == null)
+        uses: flutter-actions/setup-flutter@v3
+        with:
           channel: stable
           cache: true
           cache-sdk: true
@@ -153,12 +159,20 @@ jobs:
           # Extract ignores as proper JSON array (sorted by year + number)
           extract_ignores() {
             local file=$1
-            if [ -f "$file" ]; then
-              yq -o=json '.ignore | keys' "$file" \
-                | jq -r '.[]' \
-                | sort -t'-' -k2,2n -k3,3n \
-                | tr '[:lower:]' '[:upper:]' \
-                | jq -R . | jq -s .
+            
+            # Return empty array if file doesn't exist
+            if [ ! -f "$file" ]; then
+              echo "[]"
+              return
+            fi
+            
+            # Get ignore keys, handling empty objects gracefully
+            local cve_list
+            cve_list=$(yq '.ignore | keys | .[]' "$file" 2>/dev/null | tr '[:lower:]' '[:upper:]' | sort -t'-' -k2,2n -k3,3n)
+            
+            # Convert to JSON array
+            if [ -n "$cve_list" ]; then
+              echo "$cve_list" | jq -R . | jq -s .
             else
               echo "[]"
             fi
