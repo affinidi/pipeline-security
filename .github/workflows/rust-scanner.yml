@@ -68,7 +68,10 @@ jobs:
         if: steps.detect.outputs.is_rust == 'true'
         uses: actions/cache@v4
         with:
-          path: ${{ inputs.repo-path }}/target
+          path: |
+            **/target
+            ~/.cargo/registry
+            ~/.cargo/git
           key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-target-
