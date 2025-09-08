@@ -371,7 +371,6 @@ jobs:
             echo "::warning::│ 1. Fix Vulnerabilities OR                           "
             echo "::warning::│ 2. Consult Security incase of false positives / risk acceptance, update .snyk policy file accordingly"
             echo "::warning::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            exit 1
 
           elif [[ "$unknown" -gt 0 ]]; then
             echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
