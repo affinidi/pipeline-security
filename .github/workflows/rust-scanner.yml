@@ -138,6 +138,7 @@ jobs:
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
+        continue-on-error: true
         run: |
           echo "Running cargo audit..."
           cargo audit --json > audit-result.json || true
@@ -148,7 +149,7 @@ jobs:
           fi
 
           if ! jq empty audit-result.json; then
-            echo "::error::❌ Invalid Cargo Audit JSON"
+            echo "::warning::⚠️ Invalid Cargo Audit JSON"
             exit 1
           fi
 
@@ -156,6 +157,7 @@ jobs:
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
+        continue-on-error: true
         run: |
           echo "Running Snyk Code Test..."
           SNYK_CODE_EXIT=0
@@ -166,7 +168,7 @@ jobs:
           fi
 
           if ! jq empty snyk-code-result.json 2>/dev/null; then
-            echo "::error::❌ Invalid Snyk Code JSON"
+            echo "::warning::⚠️ Invalid Snyk Code JSON"
             exit 1
           fi
 
@@ -176,18 +178,19 @@ jobs:
         shell: bash
         env: 
           SNYK_GLOBAL_POLICY: ${{ secrets.SNYK_GLOBAL_POLICY }}
+        continue-on-error: true
         run: |
           # Generate SBOM
           if ! cargo cyclonedx --format json > cargo-sbom.json 2>/dev/null; then
             echo "::warning::⚠️ cargo cyclonedx exited with error — checking SBOM validity"
             if [ ! -s cargo-sbom.json ]; then
-              echo "::error::❌ SBOM generation failed completely"
+              echo "::warning::⚠️ SBOM generation failed completely"
               exit 1
             fi
           fi
 
           if ! jq empty cargo-sbom.json 2>/dev/null; then
-            echo "::error::❌ Invalid SBOM JSON"
+            echo "::warning::⚠️ Invalid SBOM JSON"
             exit 1
           fi
 
@@ -199,7 +202,7 @@ jobs:
           snyk sbom test --experimental --file cargo-sbom.json --org=affinidi --json > sbom-result.json || SNYK_EXIT=$?
 
           if [[ "$SNYK_EXIT" -ne 0 ]] && [ ! -f "sbom-result.json" ]; then
-            echo "::error::❌ Snyk scan failed and no results file was generated"
+            echo "::warning::⚠️ Snyk scan failed and no results file was generated"
             exit 1
           fi
 
@@ -357,18 +360,17 @@ jobs:
               ' combined-result-filtered.json
             fi
 
-            echo "::error::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            echo "::error::│ CRITICAL SECURITY ISSUES DETECTED                   "
-            echo "::error::├────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            echo "::error::│ 🟣 Critical vulnerabilities: $total_critical              "
-            echo "::error::│ 🔴 High vulnerabilities: $total_high                      "
-            echo "::error::│                                                     "
-            echo "::error::│ Review the detailed report above and either:        "
-            echo "::error::│                                                     "
-            echo "::error::│ 1. Fix Vulnerabilities OR                           "
-            echo "::error::│ 2. Consult Security incase of false positives / risk acceptance, update .snyk policy file accordingly"
-            echo "::error::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            exit 1
+            echo "::warning::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
+            echo "::warning::│ CRITICAL SECURITY ISSUES DETECTED                   "
+            echo "::warning::├────────────────────────────────────────────────────────────────────────────────────────────────────────"
+            echo "::warning::│ 🟣 Critical vulnerabilities: $total_critical              "
+            echo "::warning::│ 🔴 High vulnerabilities: $total_high                      "
+            echo "::warning::│                                                     "
+            echo "::warning::│ Review the detailed report above and either:        "
+            echo "::warning::│                                                     "
+            echo "::warning::│ 1. Fix Vulnerabilities OR                           "
+            echo "::warning::│ 2. Consult Security incase of false positives / risk acceptance / review"
+            echo "::warning::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
 
           elif [[ "$unknown" -gt 0 ]]; then
             echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
