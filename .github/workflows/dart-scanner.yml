@@ -126,13 +126,13 @@ jobs:
           if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
-              echo "::error::❌ SBOM generation failed completely"
+              echo "::warning::⚠️ SBOM generation failed completely"
               exit 1
             fi
           fi
 
           if ! jq empty pub-sbom.json 2>/dev/null; then
-            echo "::error::❌ Invalid SBOM JSON"
+            echo "::warning::⚠️ Invalid SBOM JSON"
             exit 1
           fi
 
@@ -144,7 +144,7 @@ jobs:
           snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json || SNYK_EXIT=$?
 
           if [[ "$SNYK_EXIT" -ne 0 ]] && [ ! -f "sbom-result.json" ]; then
-            echo "::error::❌ Snyk scan failed and no results file was generated"
+            echo "::warning::⚠️ Snyk scan failed and no results file was generated"
             exit 1
           fi
 
@@ -256,17 +256,17 @@ jobs:
                 "---"
             ' sbom-result-filtered.json
 
-            echo "::error::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            echo "::error::│ CRITICAL SECURITY ISSUES DETECTED                   "
-            echo "::error::├────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            echo "::error::│ 🟣 Critical vulnerabilities: $critical              "
-            echo "::error::│ 🔴 High vulnerabilities: $high                      "
-            echo "::error::│                                                     "
-            echo "::error::│ Review the detailed report above and either:        "
-            echo "::error::│                                                     "
-            echo "::error::│ 1. Fix Vulnerabilities OR                           "
-            echo "::error::│ 2. Consult Security in case of false positives / risk acceptance, update .snyk policy file accordingly"
-            echo "::error::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
+            echo "::warning::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
+            echo "::warning::│ CRITICAL SECURITY ISSUES DETECTED                   "
+            echo "::warning::├────────────────────────────────────────────────────────────────────────────────────────────────────────"
+            echo "::warning::│ 🟣 Critical vulnerabilities: $critical              "
+            echo "::warning::│ 🔴 High vulnerabilities: $high                      "
+            echo "::warning::│                                                     "
+            echo "::warning::│ Review the detailed report above and either:        "
+            echo "::warning::│                                                     "
+            echo "::warning::│ 1. Fix Vulnerabilities OR                           "
+            echo "::warning::│ 2. Consult Security in case of false positives / risk acceptance, update .snyk policy file accordingly"
+            echo "::warning::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
             exit 1
 
           elif [[ "$unknown" -gt 0 ]]; then
