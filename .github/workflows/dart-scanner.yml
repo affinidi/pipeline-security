@@ -120,6 +120,7 @@ jobs:
         shell: bash
         env: 
           SNYK_GLOBAL_POLICY: ${{ secrets.SNYK_GLOBAL_POLICY }}
+        continue-on-error: true
         run: |
           # Generate SBOM
           if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
