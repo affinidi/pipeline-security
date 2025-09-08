@@ -265,7 +265,7 @@ jobs:
             echo "::warning::│ Review the detailed report above and either:        "
             echo "::warning::│                                                     "
             echo "::warning::│ 1. Fix Vulnerabilities OR                           "
-            echo "::warning::│ 2. Consult Security in case of false positives / risk acceptance, update .snyk policy file accordingly"
+            echo "::warning::│ 2. Consult Security incase of false positives / risk acceptance / review"
             echo "::warning::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
 
           elif [[ "$unknown" -gt 0 ]]; then
