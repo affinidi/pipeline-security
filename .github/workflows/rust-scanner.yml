@@ -379,7 +379,7 @@ jobs:
             # Snyk Code
             jq -r '
               .sast.snyk_code
-              | map(select(.severity == "critical" or .severity == "high"))
+              | map(select(.severity == "error"))
               | .[]
               | "\(.severity | ascii_upcase) | \(.id)\n" +
                 "📛 Title: \(.title)\n" +
