@@ -51,18 +51,6 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
-      - name: ⚡ Cache Cargo Registry
-        id: cache-cargo
-        if: steps.detect.outputs.is_rust == 'true'
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
       - name: ⚡ Cache Target
         id: cache-target
         if: steps.detect.outputs.is_rust == 'true'
@@ -82,7 +70,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin
-          key: ${{ runner.os }}-cargo-bin-v2
+          key: ${{ runner.os }}-cargo-bin-v3
 
       - name: ⚡ Cache Global NPM Tools
         id: cache-npm
@@ -97,8 +85,8 @@ jobs:
         shell: bash
         run: |
           # Only install if missing
-          if ! command -v cargo-cyclonedx >/dev/null 2>&1; then
-            cargo install cargo-cyclonedx
+          if ! command -v cargo-sbom >/dev/null 2>&1; then
+            cargo install cargo-sbom
           fi
           if ! command -v cargo-audit >/dev/null 2>&1; then
             cargo install cargo-audit
@@ -181,8 +169,8 @@ jobs:
         continue-on-error: true
         run: |
           # Generate SBOM
-          if ! cargo cyclonedx --format json > cargo-sbom.json 2>/dev/null; then
-            echo "::warning::⚠️ cargo cyclonedx exited with error — checking SBOM validity"
+          if ! cargo sbom --output-format cyclone_dx_json_1_4 > cargo-sbom.json 2>/dev/null; then
+            echo "::warning::⚠️ cargo sbom exited with error — checking SBOM validity"
             if [ ! -s cargo-sbom.json ]; then
               echo "::warning::⚠️ SBOM generation failed completely"
               exit 1
@@ -278,87 +266,127 @@ jobs:
           # Merge for filtering
           IGNORED_CVES_JSON=$(jq -n --argjson local "$LOCAL_IGNORES" --argjson global "$GLOBAL_IGNORES" '$local + $global')
 
-          # Combine all results
-          jq -s '{cargo_audit: .[0], snyk: .[1], code_test: .[2]}' audit-result.json sbom-result.json snyk-code-result.json > combined-result.json
+                    # Normalize results before combining
+          # Normalize cargo-audit
+          jq '[
+            .vulnerabilities.list[]? |
+            {
+              id: .advisory.id,
+              source: "cargo-audit",
+              package: .package.name,
+              version: .package.version,
+              severity: (.advisory.severity // "unknown"),
+              title: .advisory.title,
+              cve: (.advisory.aliases[0] // null),
+              cvss: (.advisory.cvss // null),
+              url: (.advisory.url // null),
+              fix: (if .versions.patched then .versions.patched else null end)
+            }
+          ]' audit-result.json > norm-audit.json
 
-          # Normalize CVEs in SBOM to uppercase and filter ignored ones
+          # Normalize snyk-sbom
+          jq '[
+            .vulnerabilities[]? |
+            {
+              id: (.identifiers.CVE[0] // .id),
+              source: "snyk-sbom",
+              package: .packageName,
+              version: .version,
+              severity: (.severity // "unknown"),
+              title: .title,
+              cve: (.identifiers.CVE[0] // null),
+              cvss: (.cvssScore // null),
+              cvss_vector: (.CVSSv3 // null),
+              url: (.url // null),
+              fix: (if .semver.patched then .semver.patched[0]
+                    elif .semver.unaffected then .semver.unaffected[0]
+                    else null end)
+            }
+          ]' sbom-result.json > norm-sbom.json
+
+          # Normalize snyk-code (SARIF)
+          jq '[
+            .runs[].results[]? |
+            {
+              id: .ruleId,
+              source: "snyk-code",
+              package: null,
+              version: null,
+              severity: .level,
+              title: .message.text,
+              file: .locations[0].physicalLocation.artifactLocation.uri,
+              line: .locations[0].physicalLocation.region.startLine,
+              fix: "Manual review required"
+            }
+          ]' snyk-code-result.json > norm-code.json
+
+          # Combine normalized
+          jq -s '{sca: {cargo_audit: .[0], snyk_sbom: .[1]}, sast: {snyk_code: .[2]}}' \
+            norm-audit.json norm-sbom.json norm-code.json > combined-result.json
+
+          # Filter ignored CVEs
           jq --argjson ignored "$IGNORED_CVES_JSON" '
-            .snyk.vulnerabilities |= (if . then map(
-              if .identifiers.CVE then
-                .identifiers.CVE |= map(ascii_upcase)
-              else
-                .
-              end
+            .sca.snyk_sbom |= (if . then map(
+              if .cve then .cve |= ascii_upcase | . end
             ) | map(select(
-              (.identifiers.CVE // []) | all(. as $cve | $ignored | index($cve) | not)
+              (.cve // null) as $cve | ($cve|not or ($ignored | index($cve)|not))
             )) else [] end)
           ' combined-result.json > combined-result-filtered.json
 
           # Count vulnerabilities by severity
-          audit_critical=$(jq '[.cargo_audit.vulnerabilities.list[]? | select(.advisory.severity=="critical")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          audit_high=$(jq '[.cargo_audit.vulnerabilities.list[]? | select(.advisory.severity=="high")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          snyk_critical=$(jq '[.snyk.vulnerabilities? // [] | .[] | select(.severity=="critical")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          snyk_high=$(jq '[.snyk.vulnerabilities? // [] | .[] | select(.severity=="high")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          code_critical=$(jq '[.code_test.issues[]? | select(.severity=="critical")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          code_high=$(jq '[.code_test.issues[]? | select(.severity=="high")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
+          audit_critical=$(jq '[.sca.cargo_audit[]? | select(.severity=="critical")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
+          audit_high=$(jq '[.sca.cargo_audit[]? | select(.severity=="high")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
+          snyk_critical=$(jq '[.sca.snyk_sbom[]? | select(.severity=="critical")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
+          snyk_high=$(jq '[.sca.snyk_sbom[]? | select(.severity=="high")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
+          code_critical=$(jq '[.sast.snyk_code[]? | select(.severity=="critical")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
+          code_high=$(jq '[.sast.snyk_code[]? | select(.severity=="high")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
           
           total_critical=$((audit_critical + snyk_critical + code_critical))
           total_high=$((audit_high + snyk_high + code_high))
-          unknown=$(jq '[.snyk.vulnerabilities? // [] | .[] | select(.severity=="unknown")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
+          unknown=$(jq '[.sca.snyk_sbom[]? | select(.severity=="unknown")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
 
           if [[ $total_critical -gt 0 || $total_high -gt 0 ]]; then
             echo "----------------------------------------------------------------------"
             echo "                        VULNERABILITY DETAILS          "
             echo "----------------------------------------------------------------------"
             
-            # Display Cargo Audit vulnerabilities
-            if [[ $audit_critical -gt 0 || $audit_high -gt 0 ]]; then
-              echo "🦀 CARGO AUDIT (RustSec) FINDINGS:"
-              jq -r '
-                (.cargo_audit.vulnerabilities.list // [])
-                | map(select(.advisory.severity == "critical" or .advisory.severity == "high"))
-                | .[]
-                | "\(.advisory.severity | ascii_upcase) | \(.package.name)@\(.package.version)\n" +
-                  "📛 Title: \(.advisory.title)\n" +
-                  "🔗 CVE: \(.advisory.aliases[0] // "None")\n" +
-                  "⚠️ CVSS: \(.advisory.cvss // "?") \n" +
-                  "💡 Fix: \(if .versions.patched then "Upgrade to: \(.versions.patched | join(", "))" else "See: \(.advisory.url // "No fix info")" end)\n" +
-                  "---"
-              ' combined-result-filtered.json
-            fi
+            # Cargo Audit
+            jq -r '
+              .sca.cargo_audit
+              | map(select(.severity == "critical" or .severity == "high"))
+              | .[]
+              | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n" +
+                "📛 Title: \(.title)\n" +
+                "🔗 CVE: \(.cve // "None")\n" +
+                "⚠️ CVSS: \(.cvss // "?") \n" +
+                "💡 Fix: \(if .fix then "Upgrade to: \(.fix | join(", "))" else "See: \(.url // "No fix info")" end)\n" +
+                "---"
+            ' combined-result-filtered.json
 
-            # Display Snyk SBOM vulnerabilities  
-            if [[ $snyk_critical -gt 0 || $snyk_high -gt 0 ]]; then
-              echo "🔍 SNYK SBOM FINDINGS:"
-              jq -r '
-                (.snyk.vulnerabilities // [])
-                | map(select(.severity == "critical" or .severity == "high"))
-                | .[]
-                | "\(.severity | ascii_upcase) | \(.packageName)@\(.version)\n" +
-                  "📛 Title: \(.title)\n" +
-                  "🔗 CVE: \(.identifiers.CVE[0] // "None")\n" +
-                  "⚠️ CVSS: \(.cvssScore // "?") (\(.CVSSv3 // "No vector"))\n" +
-                  "💡 Fix: \(if .semver.patched then "Upgrade to \(.semver.patched[0])" 
-                        elif .semver.unaffected then "Use version: \(.semver.unaffected[0])" 
-                        else "See: \(.url // "No fix info")" end)\n" +
-                  "---"
-              ' combined-result-filtered.json
-            fi
+            # Snyk SBOM
+            jq -r '
+              .sca.snyk_sbom
+              | map(select(.severity == "critical" or .severity == "high"))
+              | .[]
+              | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n" +
+                "📛 Title: \(.title)\n" +
+                "🔗 CVE: \(.cve // "None")\n" +
+                "⚠️ CVSS: \(.cvss // "?") (\(.cvss_vector // "No vector"))\n" +
+                "💡 Fix: \(if .fix then "Upgrade to \(.fix)" else "See: \(.url // "No fix info")" end)\n" +
+                "---"
+            ' combined-result-filtered.json
 
-            # Display Snyk Code Test issues
-            if [[ $code_critical -gt 0 || $code_high -gt 0 ]]; then
-              echo "🔎 SNYK CODE TEST FINDINGS:"
-              jq -r '
-                (.code_test.issues // [])
-                | map(select(.severity == "critical" or .severity == "high"))
-                | .[]
-                | "\(.severity | ascii_upcase) | \(.id)\n" +
-                  "📛 Title: \(.title)\n" +
-                  "📍 File: \(.filePath):\(.lineNumber // "?")\n" +
-                  "💡 Fix: \(.fixedIn // "Manual review required")\n" +
-                  "---"
-              ' combined-result-filtered.json
-            fi
+            # Snyk Code
+            jq -r '
+              .sast.snyk_code
+              | map(select(.severity == "error"))
+              | .[]
+              | "\(.severity | ascii_upcase) | \(.id)\n" +
+                "📛 Title: \(.title)\n" +
+                "📍 File: \(.file // "?"):\(.line // "?")\n" +
+                "💡 Fix: \(.fix // "Manual review required")\n" +
+                "---"
+            ' combined-result-filtered.json
 
             echo "::warning::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
             echo "::warning::│ CRITICAL SECURITY ISSUES DETECTED                   "
@@ -379,6 +407,18 @@ jobs:
             echo "✅ All good, no critical or high vulnerabilities found. Good job! 🎉"
             echo "----------------------------------------------------------------------"
           fi
+
+      - name: 📤 Upload reports
+        if: always() && steps.detect.outputs.is_rust == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-security-reports
+          path: |
+            audit-result.json
+            sbom-result.json
+            snyk-code-result.json
+            combined-result*.json
+            cargo-sbom.json
 
       - name: 🧹 Cleanup
         if: always() && steps.detect.outputs.is_rust == 'true'
