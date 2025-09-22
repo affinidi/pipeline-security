@@ -288,3 +288,4 @@ jobs:
         if: steps.detect.outputs.is_dart != 'true'
         shell: bash
         run: echo "🟡 Skipping scan - not a Dart/Flutter project"
+        
