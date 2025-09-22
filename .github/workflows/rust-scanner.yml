@@ -244,7 +244,7 @@ jobs:
 
           # Check global policy
           if [ -n "$SNYK_GLOBAL_POLICY" ]; then
-            curl -sSL "$SNYK_GLOBAL_POLICY" -o "$GLOBAL_POLICY_PATH" || echo "⚠️ Failed to fetch global policy"
+            curl -sSL "https://raw.githubusercontent.com/affinidi/pipeline-security/refs/heads/fix/rust-security-scanner/.snyk-global" -o "$GLOBAL_POLICY_PATH" || echo "⚠️ Failed to fetch global policy"
           fi
 
           if [ -f "$GLOBAL_POLICY_PATH" ]; then
