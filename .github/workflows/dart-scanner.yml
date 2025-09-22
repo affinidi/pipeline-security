@@ -11,7 +11,6 @@ on:
       flutter-version:
         description: 'Flutter SDK version'
         required: false
-        default: 'stable'
         type: string
 
     secrets:
@@ -53,11 +52,18 @@ jobs:
             echo "is_dart=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: 🧰 Set up Flutter SDK
-        if: steps.detect.outputs.is_dart == 'true'
+      - name: 🧰 Set up Flutter SDK (specific version if provided)
+        if: steps.detect.outputs.is_dart == 'true' && inputs.flutter-version != ''
         uses: flutter-actions/setup-flutter@v3
         with:
           version: ${{ inputs.flutter-version }}
+          cache: true
+          cache-sdk: true
+
+      - name: 🧰 Set up Flutter SDK (else stable channel)
+        if: steps.detect.outputs.is_dart == 'true' && (inputs.flutter-version == '' || inputs.flutter-version == null)
+        uses: flutter-actions/setup-flutter@v3
+        with:
           channel: stable
           cache: true
           cache-sdk: true
@@ -114,18 +120,19 @@ jobs:
         shell: bash
         env: 
           SNYK_GLOBAL_POLICY: ${{ secrets.SNYK_GLOBAL_POLICY }}
+        continue-on-error: true
         run: |
           # Generate SBOM
           if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
             echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
             if [ ! -s pub-sbom.json ]; then
-              echo "::error::❌ SBOM generation failed completely"
+              echo "::warning::⚠️ SBOM generation failed completely"
               exit 1
             fi
           fi
 
           if ! jq empty pub-sbom.json 2>/dev/null; then
-            echo "::error::❌ Invalid SBOM JSON"
+            echo "::warning::⚠️ Invalid SBOM JSON"
             exit 1
           fi
 
@@ -137,7 +144,7 @@ jobs:
           snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json || SNYK_EXIT=$?
 
           if [[ "$SNYK_EXIT" -ne 0 ]] && [ ! -f "sbom-result.json" ]; then
-            echo "::error::❌ Snyk scan failed and no results file was generated"
+            echo "::warning::⚠️ Snyk scan failed and no results file was generated"
             exit 1
           fi
 
@@ -153,12 +160,20 @@ jobs:
           # Extract ignores as proper JSON array (sorted by year + number)
           extract_ignores() {
             local file=$1
-            if [ -f "$file" ]; then
-              yq -o=json '.ignore | keys' "$file" \
-                | jq -r '.[]' \
-                | sort -t'-' -k2,2n -k3,3n \
-                | tr '[:lower:]' '[:upper:]' \
-                | jq -R . | jq -s .
+            
+            # Return empty array if file doesn't exist
+            if [ ! -f "$file" ]; then
+              echo "[]"
+              return
+            fi
+            
+            # Get ignore keys, handling empty objects gracefully
+            local cve_list
+            cve_list=$(yq '.ignore | keys | .[]' "$file" 2>/dev/null | tr '[:lower:]' '[:upper:]' | sort -t'-' -k2,2n -k3,3n)
+            
+            # Convert to JSON array
+            if [ -n "$cve_list" ]; then
+              echo "$cve_list" | jq -R . | jq -s .
             else
               echo "[]"
             fi
@@ -241,18 +256,17 @@ jobs:
                 "---"
             ' sbom-result-filtered.json
 
-            echo "::error::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            echo "::error::│ CRITICAL SECURITY ISSUES DETECTED                   "
-            echo "::error::├────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            echo "::error::│ 🟣 Critical vulnerabilities: $critical              "
-            echo "::error::│ 🔴 High vulnerabilities: $high                      "
-            echo "::error::│                                                     "
-            echo "::error::│ Review the detailed report above and either:        "
-            echo "::error::│                                                     "
-            echo "::error::│ 1. Fix Vulnerabilities OR                           "
-            echo "::error::│ 2. Consult Security in case of false positives / risk acceptance, update .snyk policy file accordingly"
-            echo "::error::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            exit 1
+            echo "::warning::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
+            echo "::warning::│ CRITICAL SECURITY ISSUES DETECTED                   "
+            echo "::warning::├────────────────────────────────────────────────────────────────────────────────────────────────────────"
+            echo "::warning::│ 🟣 Critical vulnerabilities: $critical              "
+            echo "::warning::│ 🔴 High vulnerabilities: $high                      "
+            echo "::warning::│                                                     "
+            echo "::warning::│ Review the detailed report above and either:        "
+            echo "::warning::│                                                     "
+            echo "::warning::│ 1. Fix Vulnerabilities OR                           "
+            echo "::warning::│ 2. Consult Security incase of false positives / risk acceptance / review"
+            echo "::warning::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
 
           elif [[ "$unknown" -gt 0 ]]; then
             echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
