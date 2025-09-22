@@ -276,22 +276,13 @@ jobs:
             echo "----------------------------------------------------------------------"
           fi
 
-      - name: 📤 Upload reports
-        if: always() && steps.detect.outputs.is_dart == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: dart-security-reports
-          path: |
-            pub-sbom.json
-            sbom-result.json
-            sbom-result-filtered.json
-
       - name: 🧹 Cleanup
         if: always() && steps.detect.outputs.is_dart == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         run: |
           rm -f pub-sbom.json sbom-result.json sbom-result-normalized.json sbom-result-filtered.json .snyk-global
+
 
       - name: ℹ️ Skip if not a Dart/Flutter project
         if: steps.detect.outputs.is_dart != 'true'
