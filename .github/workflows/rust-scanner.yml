@@ -119,29 +119,64 @@ jobs:
           snyk config set endpoint="https://api.${SNYK_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
           snyk auth "$SNYK_SCANNER_TOKEN" >/dev/null 2>&1
 
-      - name: 🛡️ Run Cargo Audit & SBOM for all crates
+      - name: 🛡️ Run Cargo Audit & SBOM (Adaptive)
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
         continue-on-error: true
         run: |
           mkdir -p security-reports
-          while IFS= read -r cargo_file; do
-            PROJECT_DIR=$(dirname "$cargo_file")
-            PROJECT_TAG=$(echo "$PROJECT_DIR" | tr '/' '_')
-            echo "Scanning $PROJECT_DIR"
+          cd "$REPO_PATH"
 
-            cd "$PROJECT_DIR" || continue
+          # --- Detect if it's a workspace ---
+          if grep -q "^\[workspace\]" Cargo.toml 2>/dev/null; then
 
-            cargo audit --json > "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json" || true
-            if [ ! -s "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json" ]; then
-              echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json"
+            echo "🦀 Workspace detected — scanning only at root"
+
+            if [ ! -f Cargo.lock ]; then
+              echo "🔧 No Cargo.lock found — generating temporary one"
+              cargo generate-lockfile
             fi
 
-            cargo sbom --output-format cyclone_dx_json_1_4 > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json" 2>/dev/null || \
-              echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json"
+            cargo audit --json > "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json" || true
+            if [ ! -s "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json" ]; then
+              echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json"
+            fi
 
-            cd "${GITHUB_WORKSPACE}"
-          done < cargo_projects.list
+            cargo sbom --output-format cyclone_dx_json_1_4 > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-root.json" 2>/dev/null || \
+              echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-root.json"
+
+          else
+            echo "🧩 No workspace detected — scanning each crate individually"
+            mapfile -t CARGO_PROJECTS < <(find "${REPO_PATH}" -type f -name Cargo.toml \
+              -not -path "*/target/*" -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.git/*" \
+              | sort)
+
+            for cargo_file in "${CARGO_PROJECTS[@]}"; do
+              PROJECT_DIR=$(dirname "$cargo_file")
+              PROJECT_TAG=$(echo "$PROJECT_DIR" | tr '/' '_')
+
+              echo "📦 Scanning $PROJECT_DIR"
+              cd "$PROJECT_DIR" || continue
+
+              # Generate lockfile if missing
+              if [ ! -f Cargo.lock ]; then
+                echo "🔧 No Cargo.lock found — generating temporary one"
+                cargo generate-lockfile
+              fi
+
+              cargo audit --json > "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json" || true
+              if [ ! -s "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json" ]; then
+                echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json"
+              fi
+
+              cargo sbom --output-format cyclone_dx_json_1_4 > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json" 2>/dev/null || \
+                echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json"
+
+              cd "$GITHUB_WORKSPACE/$REPO_PATH"
+            done
+          fi
 
       - name: 🔎 Run Snyk Code Test
         if: steps.detect.outputs.is_rust == 'true'
@@ -161,12 +196,13 @@ jobs:
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
         run: |
-          if ls security-reports/cargo-sbom-*.json 1> /dev/null 2>&1; then
+          if ls security-reports/cargo-sbom-*.json 1> /dev/null 2>&1 || [ -f security-reports/cargo-sbom-root.json ]; then
             jq -s '
               reduce .[] as $item ({"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]};
                 .components += ($item.components // [])
               )
-            ' security-reports/cargo-sbom-*.json > cargo-sbom.json
+            ' security-reports/cargo-sbom-*.json security-reports/cargo-sbom-root.json > cargo-sbom.json 2>/dev/null || \
+            cp security-reports/cargo-sbom-root.json cargo-sbom.json
           else
             echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > cargo-sbom.json
           fi
@@ -175,14 +211,15 @@ jobs:
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
         run: |
-          if ls security-reports/audit-result-*.json 1> /dev/null 2>&1; then
+          if ls security-reports/audit-result-*.json 1> /dev/null 2>&1 || [ -f security-reports/audit-result-root.json ]; then
             jq -s '
               reduce .[] as $item (
                 {"vulnerabilities":{"list":[],"count":0},"warnings":[]};
                 .vulnerabilities.list += ($item.vulnerabilities.list // [])
               )
               | .vulnerabilities.count = (.vulnerabilities.list | length)
-            ' security-reports/audit-result-*.json > audit-result.json
+            ' security-reports/audit-result-*.json security-reports/audit-result-root.json > audit-result.json 2>/dev/null || \
+            cp security-reports/audit-result-root.json audit-result.json
           else
             echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > audit-result.json
           fi
