@@ -465,7 +465,7 @@ jobs:
                 .sast.snyk_code
                 | map(select(.severity == "error"))
                 | .[]
-                | "\(.severity | ascii_upcase)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n📍 File: \(.file // "?"):\(.line // "?")\n💡 Fix: \(.fix // "Consult Security - Manual Review Required")\n---"
+                | "\(.severity | ascii_upcase)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n📍 File: \(.file // "?"):\(.line // "?")\n💡 Fix: \(.fix // "Consult Security - Manual Review Required")\n🔗 Ref: https://security.snyk.io/vuln/\(.id // "UNKNOWN")\n---"
               ' combined-result.json
             fi
 
@@ -476,19 +476,16 @@ jobs:
               echo "           CARGO AUDIT Vulnerabilities (Crate Advisories)             "
               echo "----------------------------------------------------------------------"
               jq -r '
-                .sca.cargo_audit
-                | map(select(.severity == "critical" or .severity == "high" or .severity == "unknown"))
-                | sort_by(if .severity == "critical" then 0 elif .severity == "high" then 1 else 2 end)
-                | .[]
-                | "\(.severity | ascii_upcase) | \(.package)@\(.version)\
-              \n🆔 ID: \(.id // "None")\
-              \n📛 Title: \(.title)\
-              \n🔗 CVE: \(.cve // "None")\
-              \n⚠️ CVSS: \(.cvss // "?")\
-              \n💡 Fix: \(if (.fix // [] | length) > 0 then "Upgrade to \(.fix | join(", "))" else "No Fix Available - Consult Security" end)\
-              \n🔗 Ref: \(if (.id|tostring|startswith("RUSTSEC-")) then "https://rustsec.org/advisories/\(.id)" else (if .cve then "https://nvd.nist.gov/vuln/detail/\(.cve)" else "https://rustsec.org/advisories/" end) end)\
-              \n---"
-              ' combined-result.json
+              .sca.cargo_audit
+              | map(select(.severity == "critical" or .severity == "high" or .severity == "unknown"))
+              | sort_by(
+                  if .severity == "critical" then 0
+                  elif .severity == "high" then 1
+                  else 2 end
+                )
+              | .[]
+              | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🔗 CVE: \(.cve // "None")\n⚠️ CVSS: \(.cvss // "?")\n💡 Fix: \(if (.fix // [] | length) > 0 then "Upgrade to \(.fix | join(", "))" else "No Fix Available - Consult Security" end)\n🔗 Ref: \(if (.id|tostring|startswith("RUSTSEC-")) then "https://rustsec.org/advisories/\(.id)" elif .cve then "https://nvd.nist.gov/vuln/detail/\(.cve)" else "https://rustsec.org/advisories/" end)\n---"
+            ' combined-result.json
             fi
 
             echo "----------------------------------------------------------------------"
