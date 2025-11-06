@@ -440,7 +440,7 @@ jobs:
                     else 2 end
                   )
                 | .[]
-                | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n🔗 CVE: \(.cve // "None")\n⚠️ CVSS: \(.cvss // "?")\n💡 Fix: \(if .fix then "Upgrade to \(.fix)" else "See: \(.url // "Check for latest patch / fix")" end)\n---"
+                | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n🔗 CVE: \(.cve // "None")\n⚠️ CVSS: \(.cvss // "?")\n💡 Fix: \(if .fix then "Upgrade to \(.fix)" else "Review: https://security.snyk.io/vuln/\(.id // "UNKNOWN")" end)\n---"
               ' combined-result.json
             fi
 
@@ -454,7 +454,7 @@ jobs:
                 .sast.snyk_code
                 | map(select(.severity == "error"))
                 | .[]
-                | "\(.severity | ascii_upcase)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n📍 File: \(.file // "?"):\(.line // "?")\n💡 Fix: \(.fix // "Manual review required")\n---"
+                | "\(.severity | ascii_upcase)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n📍 File: \(.file // "?"):\(.line // "?")\n💡 Fix: \(if .fix != null then .fix else "Review: https://security.snyk.io/vuln/\(.id // "UNKNOWN")" end)\n---"
               ' combined-result.json
             fi
 
@@ -473,7 +473,7 @@ jobs:
                     else 2 end
                   )
                 | .[]
-                | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🔗 CVE: \(.cve // "None")\n⚠️ CVSS: \(.cvss // "?")\n💡 Fix: \(if .fix then "Upgrade to: \(.fix | join(", "))" else "See: \(.url // "Check for latest patch / fix")" end)\n---"
+                | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🔗 CVE: \(.cve // "None")\n⚠️ CVSS: \(.cvss // "?")\n💡 Fix: \(if .fix then "Upgrade to: \(.fix | join(", "))" else "Review: https://security.snyk.io/vuln/\(.id // "UNKNOWN")" end)\n---"
               ' combined-result.json
             fi
 
