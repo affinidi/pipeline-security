@@ -111,7 +111,7 @@ jobs:
             echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
           fi
 
-      - name: 🔐 Authenticatation
+      - name: 🔐 Authentication
         if: steps.detect.outputs.is_rust == 'true'
         env:
           SNYK_SCANNER_TOKEN: ${{ secrets.SNYK_SCANNER_TOKEN }}
@@ -215,13 +215,19 @@ jobs:
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
         run: |
-          if ls security-reports/cargo-sbom-*.json 1> /dev/null 2>&1 || [ -f security-reports/cargo-sbom-root.json ]; then
+          if [ -f security-reports/cargo-sbom-root.json ] || compgen -G "security-reports/cargo-sbom-*.json" >/dev/null; then
+            files=()
+            if compgen -G "security-reports/cargo-sbom-*.json" >/dev/null; then
+              files+=(security-reports/cargo-sbom-*.json)
+            fi
+            if [ -f security-reports/cargo-sbom-root.json ]; then
+              files+=(security-reports/cargo-sbom-root.json)
+            fi
             jq -s '
               reduce .[] as $item ({"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]};
                 .components += ($item.components // [])
               )
-            ' security-reports/cargo-sbom-*.json security-reports/cargo-sbom-root.json > cargo-sbom.json 2>/dev/null || \
-            cp security-reports/cargo-sbom-root.json cargo-sbom.json
+            ' "${files[@]}" > cargo-sbom.json
           else
             echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > cargo-sbom.json
           fi
@@ -230,15 +236,20 @@ jobs:
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
         run: |
-          if ls security-reports/audit-result-*.json 1> /dev/null 2>&1 || [ -f security-reports/audit-result-root.json ]; then
+          if [ -f security-reports/audit-result-root.json ] || compgen -G "security-reports/audit-result-*.json" >/dev/null; then
+            files=()
+            if compgen -G "security-reports/audit-result-*.json" >/dev/null; then
+              files+=(security-reports/audit-result-*.json)
+            fi
+            if [ -f security-reports/audit-result-root.json ]; then
+              files+=(security-reports/audit-result-root.json)
+            fi
             jq -s '
-              reduce .[] as $item (
-                {"vulnerabilities":{"list":[],"count":0},"warnings":[]};
+              reduce .[] as $item ({"vulnerabilities":{"list":[],"count":0},"warnings":[]};
                 .vulnerabilities.list += ($item.vulnerabilities.list // [])
               )
               | .vulnerabilities.count = (.vulnerabilities.list | length)
-            ' security-reports/audit-result-*.json security-reports/audit-result-root.json > audit-result.json 2>/dev/null || \
-            cp security-reports/audit-result-root.json audit-result.json
+            ' "${files[@]}" > audit-result.json
           else
             echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > audit-result.json
           fi
@@ -406,7 +417,7 @@ jobs:
           jq -s '{sca:{cargo_audit:.[0], snyk_sbom:.[1]}, sast:{snyk_code:.[2]}}' \
             norm-audit-filtered.json norm-sbom-filtered.json norm-code-filtered.json > combined-result.json
 
-      - name: 📊 Generate Report
+      - name: 📊 Report
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
         run: |
@@ -454,7 +465,7 @@ jobs:
                 .sast.snyk_code
                 | map(select(.severity == "error"))
                 | .[]
-                | "\(.severity | ascii_upcase)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n📍 File: \(.file // "?"):\(.line // "?")\n💡 Fix: \(.fix // "Consult Security - Manual Review Required")\n🔗 Ref: https://security.snyk.io/vuln/\(.id // "UNKNOWN")\n---"
+                | "\(.severity | ascii_upcase)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n📍 File: \(.file // "?"):\(.line // "?")\n💡 Fix: \(.fix // "Consult Security - Manual Review Required")\n---"
               ' combined-result.json
             fi
 
@@ -467,13 +478,16 @@ jobs:
               jq -r '
                 .sca.cargo_audit
                 | map(select(.severity == "critical" or .severity == "high" or .severity == "unknown"))
-                | sort_by(
-                    if .severity == "critical" then 0
-                    elif .severity == "high" then 1
-                    else 2 end
-                  )
+                | sort_by(if .severity == "critical" then 0 elif .severity == "high" then 1 else 2 end)
                 | .[]
-                | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🔗 CVE: \(.cve // "None")\n⚠️ CVSS: \(.cvss // "?")\n💡 Fix: \(if (.fix // [] | length) > 0 then "Upgrade to \(.fix | join(", "))" else "No Fix Available - Consult Security" end)\n🔗 Ref: https://security.snyk.io/vuln/\(.id // "UNKNOWN")\n---"
+                | "\(.severity | ascii_upcase) | \(.package)@\(.version)\
+              \n🆔 ID: \(.id // "None")\
+              \n📛 Title: \(.title)\
+              \n🔗 CVE: \(.cve // "None")\
+              \n⚠️ CVSS: \(.cvss // "?")\
+              \n💡 Fix: \(if (.fix // [] | length) > 0 then "Upgrade to \(.fix | join(", "))" else "No Fix Available - Consult Security" end)\
+              \n🔗 Ref: \(if (.id|tostring|startswith("RUSTSEC-")) then "https://rustsec.org/advisories/\(.id)" else (if .cve then "https://nvd.nist.gov/vuln/detail/\(.cve)" else "https://rustsec.org/advisories/" end) end)\
+              \n---"
               ' combined-result.json
             fi
 
