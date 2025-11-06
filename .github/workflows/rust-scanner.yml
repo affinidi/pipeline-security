@@ -21,6 +21,9 @@ jobs:
     name: Rust Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+        CARGO_TERM_COLOR: always
+        RUSTFLAGS: "-Awarnings"
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
@@ -129,26 +132,42 @@ jobs:
           mkdir -p security-reports
           cd "$REPO_PATH"
 
-          # --- Detect if it's a workspace ---
-          if grep -q "^\[workspace\]" Cargo.toml 2>/dev/null; then
+          # Find workspace root by walking upward
+          find_workspace_root() {
+            local dir="$1"
+            while [[ "$dir" != "/" ]]; do
+              if [[ -f "$dir/Cargo.toml" ]] && grep -q "^\[workspace\]" "$dir/Cargo.toml"; then
+                echo "$dir"
+                return
+              fi
+              dir=$(dirname "$dir")
+            done
+            echo ""
+          }
 
-            echo "🦀 Workspace detected — scanning only at root"
+          WORKSPACE_ROOT=$(find_workspace_root "$(realpath "$REPO_PATH")")
+
+          # --- Detect if it's a workspace ---
+          if [[ -n "$WORKSPACE_ROOT" ]]; then
+            echo "🦀 Workspace detected at: $WORKSPACE_ROOT"
+            cd "$WORKSPACE_ROOT"
 
             if [ ! -f Cargo.lock ]; then
-              echo "🔧 No Cargo.lock found — generating temporary one"
+              echo "🔧 Generating workspace lockfile"
               cargo generate-lockfile
             fi
 
             cargo audit --json > "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json" || true
-            if [ ! -s "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json" ]; then
+            [[ ! -s "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json" ]] && \
               echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json"
-            fi
 
-            cargo sbom --output-format cyclone_dx_json_1_4 > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-root.json" 2>/dev/null || \
-              echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-root.json"
+            cargo sbom --output-format cyclone_dx_json_1_4 \
+              > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-root.json" 2>/dev/null || \
+              echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' \
+              > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-root.json"
 
           else
-            echo "🧩 No workspace detected — scanning each crate individually"
+            echo "🧩 No workspace found — scanning crates individually"
             mapfile -t CARGO_PROJECTS < <(find "${REPO_PATH}" -type f -name Cargo.toml \
               -not -path "*/target/*" -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.git/*" \
               | sort)
@@ -160,19 +179,19 @@ jobs:
               echo "📦 Scanning $PROJECT_DIR"
               cd "$PROJECT_DIR" || continue
 
-              # Generate lockfile if missing
               if [ ! -f Cargo.lock ]; then
                 echo "🔧 No Cargo.lock found — generating temporary one"
                 cargo generate-lockfile
               fi
 
               cargo audit --json > "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json" || true
-              if [ ! -s "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json" ]; then
+              [[ ! -s "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json" ]] && \
                 echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json"
-              fi
 
-              cargo sbom --output-format cyclone_dx_json_1_4 > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json" 2>/dev/null || \
-                echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json"
+              cargo sbom --output-format cyclone_dx_json_1_4 \
+                > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json" 2>/dev/null || \
+                echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' \
+                > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json"
 
               cd "$GITHUB_WORKSPACE/$REPO_PATH"
             done
