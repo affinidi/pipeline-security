@@ -465,7 +465,7 @@ jobs:
                 .sast.snyk_code
                 | map(select(.severity == "error"))
                 | .[]
-                | "\(.severity | ascii_upcase)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n📍 File: \(.file // "?"):\(.line // "?")\n💡 Fix: \(.fix // "Consult Security - Manual Review Required")\n🔗 Ref: https://security.snyk.io/vuln/\(.id // "UNKNOWN")\n---"
+                | "\(.severity | ascii_upcase)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n📍 File: \(.file // "?"):\(.line // "?")\n💡 Fix: \(.fix // "Consult Security - Manual Review Required")\n---"
               ' combined-result.json
             fi
 
