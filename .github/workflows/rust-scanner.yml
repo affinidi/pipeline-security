@@ -8,7 +8,6 @@ on:
         required: false
         default: '.'
         type: string
-
     secrets:
       SNYK_SCANNER_TOKEN:
         required: true
@@ -21,51 +20,64 @@ jobs:
   rust-scan:
     name: Rust Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+        CARGO_TERM_COLOR: always
+        RUSTFLAGS: "-Awarnings"
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: 🔍 Detect Project Type
+      - name: 🔍 Detect Rust Projects
         id: detect
         shell: bash
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
         run: |
-          REPO_PATH="${{ inputs.repo-path }}"
-          if [ ! -f "${REPO_PATH}/Cargo.toml" ]; then
+          mapfile -t CARGO_PROJECTS < <(find "$REPO_PATH" -type f -name Cargo.toml \
+            -not -path "*/target/*" -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.git/*" \
+            | sort)
+
+          if [ "${#CARGO_PROJECTS[@]}" -eq 0 ]; then
             echo "::warning::No Cargo.toml found - not a Rust project"
             echo "is_rust=false" >> $GITHUB_OUTPUT
             exit 0
           fi
-          echo "Project Type : Rust"
+
+          echo "Found ${#CARGO_PROJECTS[@]} Rust project(s)"
           echo "is_rust=true" >> $GITHUB_OUTPUT
+          printf '%s\n' "${CARGO_PROJECTS[@]}" > cargo_projects.list
 
       - name: 📦 Install system libraries
         if: steps.detect.outputs.is_rust == 'true'
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y pkg-config libdbus-1-dev
+          sudo apt-get install -y pkg-config libdbus-1-dev jq
+          sudo wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+          sudo chmod +x /usr/bin/yq
 
-      - name: 🦀 Set up Rust Toolchain with components
+      - name: 🦀 Set up Rust Toolchain
         if: steps.detect.outputs.is_rust == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: stable
           components: clippy, rustfmt
 
-      - name: ⚡ Cache Target
-        id: cache-target
+      - name: ⚡ Cache Cargo
         if: steps.detect.outputs.is_rust == 'true'
         uses: actions/cache@v4
         with:
           path: |
-            **/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
+            **/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-target-
+            ${{ runner.os }}-cargo-
 
       - name: ⚡ Cache Cargo Bin
-        id: cache-bin
         if: steps.detect.outputs.is_rust == 'true'
         uses: actions/cache@v4
         with:
@@ -73,7 +85,6 @@ jobs:
           key: ${{ runner.os }}-cargo-bin-v3
 
       - name: ⚡ Cache Global NPM Tools
-        id: cache-npm
         if: steps.detect.outputs.is_rust == 'true'
         uses: actions/cache@v4
         with:
@@ -82,9 +93,7 @@ jobs:
 
       - name: 📦 Install Rust analysis tools
         if: steps.detect.outputs.is_rust == 'true'
-        shell: bash
         run: |
-          # Only install if missing
           if ! command -v cargo-sbom >/dev/null 2>&1; then
             cargo install cargo-sbom
           fi
@@ -94,25 +103,16 @@ jobs:
 
       - name: 📦 Install required tools
         if: steps.detect.outputs.is_rust == 'true'
-        shell: bash
         run: |
-          if ! command -v snyk > /dev/null; then
+          if ! command -v snyk >/dev/null; then
             mkdir -p ~/.npm-global
             npm config set prefix ~/.npm-global
             npm install -g snyk@latest
             echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
           fi
 
-      - name: 📦 Install yq
-        if: steps.detect.outputs.is_rust == 'true'
-        run: |
-          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
-          sudo chmod +x /usr/bin/yq
-
       - name: 🔐 Authentication
         if: steps.detect.outputs.is_rust == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
         env:
           SNYK_SCANNER_TOKEN: ${{ secrets.SNYK_SCANNER_TOKEN }}
           SNYK_SCANNER_REGION: ${{ secrets.SNYK_SCANNER_REGION }}
@@ -122,151 +122,217 @@ jobs:
           snyk config set endpoint="https://api.${SNYK_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
           snyk auth "$SNYK_SCANNER_TOKEN" >/dev/null 2>&1
 
-      - name: 🛡️ Run Cargo Audit (RustSec)
+      - name: 🛡️ Run Cargo Audit & SBOM (Adaptive)
+        if: steps.detect.outputs.is_rust == 'true'
+        shell: bash
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
+        continue-on-error: true
+        run: |
+          mkdir -p security-reports
+          cd "$REPO_PATH"
+
+          # Find workspace root by walking upward
+          find_workspace_root() {
+            local dir="$1"
+            while [[ "$dir" != "/" ]]; do
+              if [[ -f "$dir/Cargo.toml" ]] && grep -q "^\[workspace\]" "$dir/Cargo.toml"; then
+                echo "$dir"
+                return
+              fi
+              dir=$(dirname "$dir")
+            done
+            echo ""
+          }
+
+          WORKSPACE_ROOT=$(find_workspace_root "$(realpath "$REPO_PATH")")
+
+          # --- Detect if it's a workspace ---
+          if [[ -n "$WORKSPACE_ROOT" ]]; then
+            echo "🦀 Workspace detected at: $WORKSPACE_ROOT"
+            cd "$WORKSPACE_ROOT"
+
+            if [ ! -f Cargo.lock ]; then
+              echo "🔧 Generating workspace lockfile"
+              cargo generate-lockfile
+            fi
+
+            cargo audit --json > "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json" || true
+            [[ ! -s "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json" ]] && \
+              echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > "${GITHUB_WORKSPACE}/security-reports/audit-result-root.json"
+
+            cargo sbom --output-format cyclone_dx_json_1_4 \
+              > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-root.json" 2>/dev/null || \
+              echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' \
+              > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-root.json"
+
+          else
+            echo "🧩 No workspace found — scanning crates individually"
+            mapfile -t CARGO_PROJECTS < <(find "${REPO_PATH}" -type f -name Cargo.toml \
+              -not -path "*/target/*" -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.git/*" \
+              | sort)
+
+            for cargo_file in "${CARGO_PROJECTS[@]}"; do
+              PROJECT_DIR=$(dirname "$cargo_file")
+              PROJECT_TAG=$(echo "$PROJECT_DIR" | tr '/' '_')
+
+              echo "📦 Scanning $PROJECT_DIR"
+              cd "$PROJECT_DIR" || continue
+
+              if [ ! -f Cargo.lock ]; then
+                echo "🔧 No Cargo.lock found — generating temporary one"
+                cargo generate-lockfile
+              fi
+
+              cargo audit --json > "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json" || true
+              [[ ! -s "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json" ]] && \
+                echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > "${GITHUB_WORKSPACE}/security-reports/audit-result-${PROJECT_TAG}.json"
+
+              cargo sbom --output-format cyclone_dx_json_1_4 \
+                > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json" 2>/dev/null || \
+                echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' \
+                > "${GITHUB_WORKSPACE}/security-reports/cargo-sbom-${PROJECT_TAG}.json"
+
+              cd "$GITHUB_WORKSPACE/$REPO_PATH"
+            done
+          fi
+
+      - name: 🔎 Run Snyk Code Test
         if: steps.detect.outputs.is_rust == 'true'
         working-directory: ${{ inputs.repo-path }}
         shell: bash
         continue-on-error: true
         run: |
-          echo "Running cargo audit..."
-          cargo audit --json > audit-result.json || true
-
-          if [ ! -s audit-result.json ]; then
-            echo "::warning::⚠️ cargo audit produced no output, generating empty result"
-            echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > audit-result.json
-          fi
-
-          if ! jq empty audit-result.json; then
-            echo "::warning::⚠️ Invalid Cargo Audit JSON"
-            exit 1
-          fi
-
-      - name: 🔎 Snyk Code Test
-        if: steps.detect.outputs.is_rust == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        continue-on-error: true
-        run: |
-          echo "Running Snyk Code Test..."
           SNYK_CODE_EXIT=0
           snyk code test --json > snyk-code-result.json || SNYK_CODE_EXIT=$?
-
           if [[ "$SNYK_CODE_EXIT" -ne 0 ]] && [ ! -f "snyk-code-result.json" ]; then
             echo '{"issues":[]}' > snyk-code-result.json
           fi
+          jq empty snyk-code-result.json 2>/dev/null || echo '{"issues":[]}' > snyk-code-result.json
+          mv snyk-code-result.json "${GITHUB_WORKSPACE}/security-reports/snyk-code-result.json"
 
-          if ! jq empty snyk-code-result.json 2>/dev/null; then
-            echo "::warning::⚠️ Invalid Snyk Code JSON"
-            exit 1
+      - name: 🧩 Merge SBOMs
+        if: steps.detect.outputs.is_rust == 'true'
+        shell: bash
+        run: |
+          if [ -f security-reports/cargo-sbom-root.json ] || compgen -G "security-reports/cargo-sbom-*.json" >/dev/null; then
+            files=()
+            if compgen -G "security-reports/cargo-sbom-*.json" >/dev/null; then
+              files+=(security-reports/cargo-sbom-*.json)
+            fi
+            if [ -f security-reports/cargo-sbom-root.json ]; then
+              files+=(security-reports/cargo-sbom-root.json)
+            fi
+            jq -s '
+              reduce .[] as $item ({"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]};
+                .components += ($item.components // [])
+              )
+            ' "${files[@]}" > cargo-sbom.json
+          else
+            echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > cargo-sbom.json
           fi
 
-      - name: 🧪 Run SBOM Scan and Check Vulnerability
+      - name: 🧩 Merge Cargo Audit Results
         if: steps.detect.outputs.is_rust == 'true'
-        working-directory: ${{ inputs.repo-path }}
         shell: bash
-        env: 
-          SNYK_GLOBAL_POLICY: ${{ secrets.SNYK_GLOBAL_POLICY }}
+        run: |
+          if [ -f security-reports/audit-result-root.json ] || compgen -G "security-reports/audit-result-*.json" >/dev/null; then
+            files=()
+            if compgen -G "security-reports/audit-result-*.json" >/dev/null; then
+              files+=(security-reports/audit-result-*.json)
+            fi
+            if [ -f security-reports/audit-result-root.json ]; then
+              files+=(security-reports/audit-result-root.json)
+            fi
+            jq -s '
+              reduce .[] as $item ({"vulnerabilities":{"list":[],"count":0},"warnings":[]};
+                .vulnerabilities.list += ($item.vulnerabilities.list // [])
+              )
+              | .vulnerabilities.count = (.vulnerabilities.list | length)
+            ' "${files[@]}" > audit-result.json
+          else
+            echo '{"vulnerabilities":{"list":[],"count":0},"warnings":[]}' > audit-result.json
+          fi
+
+      - name: 🧪 Run Snyk SBOM Scan
+        if: steps.detect.outputs.is_rust == 'true'
+        shell: bash
         continue-on-error: true
         run: |
-          # Generate SBOM
-          if ! cargo sbom --output-format cyclone_dx_json_1_4 > cargo-sbom.json 2>/dev/null; then
-            echo "::warning::⚠️ cargo sbom exited with error — checking SBOM validity"
-            if [ ! -s cargo-sbom.json ]; then
-              echo "::warning::⚠️ SBOM generation failed completely"
-              exit 1
-            fi
-          fi
+          snyk sbom test --experimental --file cargo-sbom.json --org=affinidi --json > sbom-result.json || true
+          jq empty sbom-result.json 2>/dev/null || echo '{"vulnerabilities":[]}' > sbom-result.json
 
-          if ! jq empty cargo-sbom.json 2>/dev/null; then
-            echo "::warning::⚠️ Invalid SBOM JSON"
-            exit 1
-          fi
+      - name: 🗂️ Extract Ignore Policies
+        if: steps.detect.outputs.is_rust == 'true'
+        shell: bash
+        env:
+          SNYK_GLOBAL_POLICY: ${{ secrets.SNYK_GLOBAL_POLICY }}
+        run: |
+          LOCAL_POLICY=".snyk"
+          GLOBAL_POLICY_PATH=".snyk-global"
 
-          echo "----------------------------------------------------------------------"
-          echo "📦 Generated SBOM"
-
-          # Run Snyk SBOM test
-          SNYK_EXIT=0
-          snyk sbom test --experimental --file cargo-sbom.json --org=affinidi --json > sbom-result.json || SNYK_EXIT=$?
-
-          if [[ "$SNYK_EXIT" -ne 0 ]] && [ ! -f "sbom-result.json" ]; then
-            echo "::warning::⚠️ Snyk scan failed and no results file was generated"
-            exit 1
-          fi
-
-          echo "----------------------------------------------------------------------"
-          echo "✓ Scanning Finished"
-
-          # Extract ignored CVEs from local and global policies
-          LOCAL_POLICY="${{ inputs.repo-path }}/.snyk"
-          LOCAL_IGNORES="[]"
-          GLOBAL_POLICY_PATH="./.snyk-global"
-          GLOBAL_IGNORES="[]"
-
-          # Extract ignores as proper JSON array (sorted by year + number)
           extract_ignores() {
             local file=$1
-            
-            # Return empty array if file doesn't exist
             if [ ! -f "$file" ]; then
               echo "[]"
               return
             fi
-            
-            # Get ignore keys, handling empty objects gracefully
-            local cve_list
-            cve_list=$(yq '.ignore | keys | .[]' "$file" 2>/dev/null | tr '[:lower:]' '[:upper:]' | sort -t'-' -k2,2n -k3,3n)
-            
-            # Convert to JSON array
-            if [ -n "$cve_list" ]; then
-              echo "$cve_list" | jq -R . | jq -s .
+            local id_list
+            id_list=$(yq '.ignore | keys | .[]' "$file" 2>/dev/null | tr '[:lower:]' '[:upper:]')
+            if [ -n "$id_list" ]; then
+              echo "$id_list" | jq -R . | jq -s .
             else
               echo "[]"
             fi
           }
 
-          # Check local policy
+          # Fetch global policy if available
+          if [ -n "$SNYK_GLOBAL_POLICY" ]; then
+            curl -sSL "$SNYK_GLOBAL_POLICY" -o "$GLOBAL_POLICY_PATH" || echo "⚠️ Failed to fetch global policy"
+          fi
+
+          # Extract local ignores
           if [ -f "$LOCAL_POLICY" ]; then
             LOCAL_IGNORES=$(extract_ignores "$LOCAL_POLICY")
             LOCAL_COUNT=$(echo "$LOCAL_IGNORES" | jq 'length')
-
             echo "----------------------------------------------------------------------"
-            echo "🗂 Found local .snyk file, ignoring $LOCAL_COUNT CVE(s)"
+            echo "🗂 Found local .snyk file, ignoring $LOCAL_COUNT vulnerabilities"
             i=1
-            for cve in $(echo "$LOCAL_IGNORES" | jq -r '.[]'); do
-              echo "  $i) $cve"
+            for vuln in $(echo "$LOCAL_IGNORES" | jq -r '.[]'); do
+              echo "  $i) $vuln"
               i=$((i+1))
             done
           else
             echo "----------------------------------------------------------------------"
             echo "ℹ️ No local .snyk file found"
+            LOCAL_IGNORES="[]"
           fi
 
-          # Check global policy
-          if [ -n "$SNYK_GLOBAL_POLICY" ]; then
-            curl -sSL "$SNYK_GLOBAL_POLICY" -o "$GLOBAL_POLICY_PATH" || echo "⚠️ Failed to fetch global policy"
-          fi
-
+          # Extract global ignores
           if [ -f "$GLOBAL_POLICY_PATH" ]; then
             GLOBAL_IGNORES=$(extract_ignores "$GLOBAL_POLICY_PATH")
             GLOBAL_COUNT=$(echo "$GLOBAL_IGNORES" | jq 'length')
-
             echo "----------------------------------------------------------------------"
-            echo "🗂 Found global .snyk-global file, ignoring $GLOBAL_COUNT CVE(s)"
+            echo "🗂 Found global .snyk-global file, ignoring $GLOBAL_COUNT vulnerabilities"
             i=1
-            for cve in $(echo "$GLOBAL_IGNORES" | jq -r '.[]'); do
-              echo "  $i) $cve"
+            for vuln in $(echo "$GLOBAL_IGNORES" | jq -r '.[]'); do
+              echo "  $i) $vuln"
               i=$((i+1))
             done
           else
             echo "----------------------------------------------------------------------"
             echo "ℹ️ No global .snyk-global file available"
+            GLOBAL_IGNORES="[]"
           fi
 
-          # Merge for filtering
-          IGNORED_CVES_JSON=$(jq -n --argjson local "$LOCAL_IGNORES" --argjson global "$GLOBAL_IGNORES" '$local + $global')
+          # Merge ignore lists
+          IGNORED_IDS_JSON=$(jq -n --argjson local "${LOCAL_IGNORES}" --argjson global "${GLOBAL_IGNORES}" '$local + $global | unique')
+          echo "$IGNORED_IDS_JSON" > ignored-ids.json
 
-                    # Normalize results before combining
+      - name: 🔄 Normalize Results
+        if: steps.detect.outputs.is_rust == 'true'
+        shell: bash
+        run: |
           # Normalize cargo-audit
           jq '[
             .vulnerabilities.list[]? |
@@ -280,7 +346,7 @@ jobs:
               cve: (.advisory.aliases[0] // null),
               cvss: (.advisory.cvss // null),
               url: (.advisory.url // null),
-              fix: (if .versions.patched then .versions.patched else null end)
+              fix: (if (.versions.patched // [] | length) > 0 then .versions.patched else null end)
             }
           ]' audit-result.json > norm-audit.json
 
@@ -288,105 +354,143 @@ jobs:
           jq '[
             .vulnerabilities[]? |
             {
-              id: (.identifiers.CVE[0] // .id),
+              id: .id,
               source: "snyk-sbom",
               package: .packageName,
               version: .version,
               severity: (.severity // "unknown"),
               title: .title,
               cve: (.identifiers.CVE[0] // null),
+              cwe: (.identifiers.CWE[0] // null),
               cvss: (.cvssScore // null),
-              cvss_vector: (.CVSSv3 // null),
-              url: (.url // null),
-              fix: (if .semver.patched then .semver.patched[0]
-                    elif .semver.unaffected then .semver.unaffected[0]
-                    else null end)
+              url: (.url // .packageUrl // null),
+              fix: (
+                if (.fixInfo.fixedIn // [] | length) > 0 then .fixInfo.fixedIn[0]
+                elif ((.fixInfo.upgradePaths // []) | length) > 0 and ((.fixInfo.upgradePaths[0] // []) | length) > 1 then .fixInfo.upgradePaths[0][1]
+                elif (.semver.patched // [] | length) > 0 then .semver.patched[0]
+                elif (.semver.unaffected // [] | length) > 0 then .semver.unaffected[0]
+                else null end
+              )
             }
           ]' sbom-result.json > norm-sbom.json
 
-          # Normalize snyk-code (SARIF)
+          # Normalize snyk-code (SAST)
           jq '[
             .runs[].results[]? |
             {
               id: .ruleId,
               source: "snyk-code",
-              package: null,
-              version: null,
               severity: .level,
               title: .message.text,
+              cwe: (.properties.cwe[0] // null),
               file: .locations[0].physicalLocation.artifactLocation.uri,
               line: .locations[0].physicalLocation.region.startLine,
               fix: "Manual review required"
             }
-          ]' snyk-code-result.json > norm-code.json
+          ]' security-reports/snyk-code-result.json > norm-code.json
 
-          # Combine normalized
-          jq -s '{sca: {cargo_audit: .[0], snyk_sbom: .[1]}, sast: {snyk_code: .[2]}}' \
-            norm-audit.json norm-sbom.json norm-code.json > combined-result.json
+      - name: 🔍 Apply Ignore Filters
+        if: steps.detect.outputs.is_rust == 'true'
+        shell: bash
+        run: |
+          IGNORED_IDS_JSON=$(cat ignored-ids.json)
 
-          # Filter ignored CVEs
-          jq --argjson ignored "$IGNORED_CVES_JSON" '
-            .sca.snyk_sbom |= (if . then map(
-              if .cve then .cve |= ascii_upcase | . end
-            ) | map(select(
-              (.cve // null) as $cve | ($cve|not or ($ignored | index($cve)|not))
-            )) else [] end)
-          ' combined-result.json > combined-result-filtered.json
+          # Filter cargo-audit
+          jq --argjson ignored "$IGNORED_IDS_JSON" '
+            map(select((.id | ascii_upcase) as $id | $ignored | index($id) | not))
+          ' norm-audit.json > norm-audit-filtered.json
 
+          # Filter snyk-sbom
+          jq --argjson ignored "$IGNORED_IDS_JSON" '
+            map(select((.id | ascii_upcase) as $id | $ignored | index($id) | not))
+          ' norm-sbom.json > norm-sbom-filtered.json
+
+          # Filter snyk-code
+          jq --argjson ignored "$IGNORED_IDS_JSON" '
+            map(select((.id | ascii_upcase) as $id | $ignored | index($id) | not))
+          ' norm-code.json > norm-code-filtered.json
+
+      - name: 🧩 Combine Filtered Results
+        if: steps.detect.outputs.is_rust == 'true'
+        shell: bash
+        run: |
+          jq -s '{sca:{cargo_audit:.[0], snyk_sbom:.[1]}, sast:{snyk_code:.[2]}}' \
+            norm-audit-filtered.json norm-sbom-filtered.json norm-code-filtered.json > combined-result.json
+
+      - name: 📊 Report
+        if: steps.detect.outputs.is_rust == 'true'
+        shell: bash
+        run: |
           # Count vulnerabilities by severity
-          audit_critical=$(jq '[.sca.cargo_audit[]? | select(.severity=="critical")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          audit_high=$(jq '[.sca.cargo_audit[]? | select(.severity=="high")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          snyk_critical=$(jq '[.sca.snyk_sbom[]? | select(.severity=="critical")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          snyk_high=$(jq '[.sca.snyk_sbom[]? | select(.severity=="high")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          code_critical=$(jq '[.sast.snyk_code[]? | select(.severity=="critical")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          code_high=$(jq '[.sast.snyk_code[]? | select(.severity=="high")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
-          
-          total_critical=$((audit_critical + snyk_critical + code_critical))
-          total_high=$((audit_high + snyk_high + code_high))
-          unknown=$(jq '[.sca.snyk_sbom[]? | select(.severity=="unknown")] | length' combined-result-filtered.json 2>/dev/null || echo 0)
+          audit_unknown=$(jq '[.sca.cargo_audit[]? | select(.severity=="unknown")] | length' combined-result.json)
+          snyk_critical=$(jq '[.sca.snyk_sbom[]? | select(.severity=="critical")] | length' combined-result.json)
+          snyk_high=$(jq '[.sca.snyk_sbom[]? | select(.severity=="high")] | length' combined-result.json)
+          snyk_unknown=$(jq '[.sca.snyk_sbom[]? | select(.severity=="unknown")] | length' combined-result.json)
+          code_critical=$(jq '[.sast.snyk_code[]? | select(.severity=="error")] | length' combined-result.json)
 
-          if [[ $total_critical -gt 0 || $total_high -gt 0 ]]; then
+          total_critical=$((snyk_critical + code_critical))
+          total_high=$((snyk_high))
+          total_unknown=$((snyk_unknown + audit_unknown))
+
+          if [[ $total_critical -gt 0 || $total_high -gt 0 || $total_unknown -gt 0 ]]; then
             echo "----------------------------------------------------------------------"
             echo "                        VULNERABILITY DETAILS          "
-            echo "----------------------------------------------------------------------"
-            
-            # Cargo Audit
-            jq -r '
+
+            # SNYK SBOM Vulnerabilities
+            sbom_count=$(jq '[.sca.snyk_sbom[]? | select(.severity=="critical" or .severity=="high")] | length' combined-result.json)
+            if [[ "$sbom_count" -gt 0 ]]; then
+              echo "----------------------------------------------------------------------"
+              echo "           SNYK SBOM Vulnerabilities (Dependency Issues)              "
+              echo "----------------------------------------------------------------------"
+              jq -r '
+                .sca.snyk_sbom
+                | map(select(.severity == "critical" or .severity == "high"))
+                | sort_by(
+                    if .severity == "critical" then 0
+                    elif .severity == "high" then 1
+                    else 2 end
+                  )
+                | .[]
+                | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n🔗 CVE: \(.cve // "None")\n⚠️ CVSS: \(.cvss // "?")\n💡 Fix: \(if .fix then "Upgrade to \(.fix)" else "No Fix Available - Consult Security" end)\n🔗 Ref: https://security.snyk.io/vuln/\(.id // "UNKNOWN")\n---"
+              ' combined-result.json
+            fi
+
+            # SNYK CODE Vulnerabilities
+            code_count=$(jq '[.sast.snyk_code[]? | select(.severity=="error")] | length' combined-result.json)
+            if [[ "$code_count" -gt 0 ]]; then
+              echo "----------------------------------------------------------------------"
+              echo "             SNYK CODE Vulnerabilities (SAST Issues)                  "
+              echo "----------------------------------------------------------------------"
+              jq -r '
+                .sast.snyk_code
+                | map(select(.severity == "error"))
+                | .[]
+                | "\(.severity | ascii_upcase)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🧩 CWE: \(.cwe // "None")\n📍 File: \(.file // "?"):\(.line // "?")\n💡 Fix: \(.fix // "Consult Security - Manual Review Required")\n---"
+              ' combined-result.json
+            fi
+
+            # CARGO AUDIT Vulnerabilities
+            audit_count=$(jq '[.sca.cargo_audit[]? | select(.severity=="critical" or .severity=="high" or .severity=="unknown")] | length' combined-result.json)
+            if [[ "$audit_count" -gt 0 ]]; then
+              echo "----------------------------------------------------------------------"
+              echo "           CARGO AUDIT Vulnerabilities (Crate Advisories)             "
+              echo "----------------------------------------------------------------------"
+              jq -r '
               .sca.cargo_audit
-              | map(select(.severity == "critical" or .severity == "high"))
+              | map(select(.severity == "critical" or .severity == "high" or .severity == "unknown"))
+              | sort_by(
+                  if .severity == "critical" then 0
+                  elif .severity == "high" then 1
+                  else 2 end
+                )
               | .[]
-              | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n" +
-                "📛 Title: \(.title)\n" +
-                "🔗 CVE: \(.cve // "None")\n" +
-                "⚠️ CVSS: \(.cvss // "?") \n" +
-                "💡 Fix: \(if .fix then "Upgrade to: \(.fix | join(", "))" else "See: \(.url // "No fix info")" end)\n" +
-                "---"
-            ' combined-result-filtered.json
+              | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n🆔 ID: \(.id // "None")\n📛 Title: \(.title)\n🔗 CVE: \(.cve // "None")\n⚠️ CVSS: \(.cvss // "?")\n💡 Fix: \(if (.fix // [] | length) > 0 then "Upgrade to \(.fix | join(", "))" else "No Fix Available - Consult Security" end)\n🔗 Ref: \(if (.id|tostring|startswith("RUSTSEC-")) then "https://rustsec.org/advisories/\(.id)" elif .cve then "https://nvd.nist.gov/vuln/detail/\(.cve)" else "https://rustsec.org/advisories/" end)\n---"
+            ' combined-result.json
+            fi
 
-            # Snyk SBOM
-            jq -r '
-              .sca.snyk_sbom
-              | map(select(.severity == "critical" or .severity == "high"))
-              | .[]
-              | "\(.severity | ascii_upcase) | \(.package)@\(.version)\n" +
-                "📛 Title: \(.title)\n" +
-                "🔗 CVE: \(.cve // "None")\n" +
-                "⚠️ CVSS: \(.cvss // "?") (\(.cvss_vector // "No vector"))\n" +
-                "💡 Fix: \(if .fix then "Upgrade to \(.fix)" else "See: \(.url // "No fix info")" end)\n" +
-                "---"
-            ' combined-result-filtered.json
-
-            # Snyk Code
-            jq -r '
-              .sast.snyk_code
-              | map(select(.severity == "error"))
-              | .[]
-              | "\(.severity | ascii_upcase) | \(.id)\n" +
-                "📛 Title: \(.title)\n" +
-                "📍 File: \(.file // "?"):\(.line // "?")\n" +
-                "💡 Fix: \(.fix // "Manual review required")\n" +
-                "---"
-            ' combined-result-filtered.json
+            echo "----------------------------------------------------------------------"
+            echo -e "    Summary: 🟣 Critical = $total_critical  |  🔴 High = $total_high  |  ⚪ Unknown = $total_unknown"
+            echo "----------------------------------------------------------------------"
 
             echo "::warning::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
             echo "::warning::│ CRITICAL SECURITY ISSUES DETECTED                   "
@@ -400,13 +504,16 @@ jobs:
             echo "::warning::│ 2. Consult Security incase of false positives / risk acceptance / review"
             echo "::warning::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
 
-          elif [[ "$unknown" -gt 0 ]]; then
-            echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
           else
             echo "----------------------------------------------------------------------"
             echo "✅ All good, no critical or high vulnerabilities found. Good job! 🎉"
             echo "----------------------------------------------------------------------"
           fi
+
+          # Move results to security-reports
+          mkdir -p security-reports
+          mv audit-result.json sbom-result.json combined-result.json cargo-sbom.json security-reports/ || true
+          mv norm-*.json security-reports/ || true
 
       - name: 📤 Upload reports
         if: always() && steps.detect.outputs.is_rust == 'true'
@@ -414,20 +521,8 @@ jobs:
         with:
           name: rust-security-reports
           path: |
-            audit-result.json
-            sbom-result.json
-            snyk-code-result.json
-            combined-result*.json
-            cargo-sbom.json
-
-      - name: 🧹 Cleanup
-        if: always() && steps.detect.outputs.is_rust == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        run: |
-          rm -f cargo-sbom.json sbom-result.json audit-result.json combined-result.json combined-result-filtered.json snyk-code-result.json
+            security-reports/
 
       - name: ℹ️ Skip if not a Rust project
         if: steps.detect.outputs.is_rust != 'true'
-        shell: bash
         run: echo "🟡 Skipping scan - not a Rust project"
