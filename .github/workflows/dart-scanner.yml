@@ -58,6 +58,7 @@ jobs:
 
           # Discover all pubspec.yaml files
           mapfile -t RAW_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
+            -not -path "*/example/*" \
             -not -path "*/build/*" \
             -not -path "*/.git/*" \
             -not -path "*/.pub-cache/*" | sort)
@@ -143,6 +144,7 @@ jobs:
           fi
 
           mapfile -t RAW_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
+            -not -path "*/example/*" \
             -not -path "*/build/*" \
             -not -path "*/.git/*" \
             -not -path "*/.pub-cache/*" | sort)
@@ -164,7 +166,20 @@ jobs:
             echo "📦 Processing: $PROJECT_DIR"
             cd "$PROJECT_DIR"
             rm -rf .dart_tool pubspec.lock
-            flutter pub get || dart pub get || true
+            
+            # Try Flutter pub get (Flutter projects)
+            if flutter pub get 2>/dev/null; then
+              echo "📦 Dependencies resolved via Flutter"
+            else
+              echo "⚠️ Flutter pub get failed — continuing with fallback"
+            fi
+
+            # Try Dart pub get (Dart-only projects)
+            if dart pub get 2>/dev/null; then
+              echo "📦 Dependencies resolved via Dart"
+            else
+              echo "⚠️ Dart pub get failed — continuing without lockfile"
+            fi
 
             echo "🧪 Generating SBOM (CycloneDX 1.4)..."
             if ! cdxgen -t pub --spec-version 1.4 -o "$OLDPWD/$SBOM_FILE" 2>/dev/null; then
