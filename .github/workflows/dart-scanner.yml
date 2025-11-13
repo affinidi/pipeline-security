@@ -47,8 +47,32 @@ jobs:
           set -ue -o pipefail
 
           echo "🔍 Searching for Dart/Flutter projects..."
-          mapfile -t DART_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
-            -not -path "*/build/*" -not -path "*/.git/*" -not -path "*/.pub-cache/*" | sort)
+
+          # Detect if root is a workspace
+          ROOT_PUBSPEC="$REPO_PATH/pubspec.yaml"
+          IS_WORKSPACE=false
+          if [ -f "$ROOT_PUBSPEC" ] && grep -q '^workspace:' "$ROOT_PUBSPEC"; then
+            echo "📁 Workspace detected at root"
+            IS_WORKSPACE=true
+          fi
+
+          # Discover all pubspec.yaml files
+          mapfile -t RAW_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
+            -not -path "*/build/*" \
+            -not -path "*/.git/*" \
+            -not -path "*/.pub-cache/*" | sort)
+
+          DART_PROJECTS=()
+
+          # Skip workspace root but keep all child packages
+          for pubspec in "${RAW_PROJECTS[@]}"; do
+            if [ "$IS_WORKSPACE" = true ] && [ "$pubspec" = "$ROOT_PUBSPEC" ]; then
+              echo "⏩ Skipping workspace root: $pubspec"
+              continue
+            fi
+            DART_PROJECTS+=("$pubspec")
+          done
+
 
           if [ ${#DART_PROJECTS[@]} -eq 0 ]; then
             echo "⚠️ No Dart/Flutter projects found - skipping scan"
@@ -110,8 +134,27 @@ jobs:
           mkdir -p security-reports
 
           echo "🔧 Generating SBOMs..."
-          mapfile -t DART_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
-            -not -path "*/build/*" -not -path "*/.git/*" -not -path "*/.pub-cache/*" | sort)
+          # Detect workspace mode
+          ROOT_PUBSPEC="$REPO_PATH/pubspec.yaml"
+          IS_WORKSPACE=false
+          if [ -f "$ROOT_PUBSPEC" ] && grep -q '^workspace:' "$ROOT_PUBSPEC"; then
+            echo "📁 Workspace detected at root"
+            IS_WORKSPACE=true
+          fi
+
+          mapfile -t RAW_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
+            -not -path "*/build/*" \
+            -not -path "*/.git/*" \
+            -not -path "*/.pub-cache/*" | sort)
+
+          DART_PROJECTS=()
+          for pubspec in "${RAW_PROJECTS[@]}"; do
+            if [ "$IS_WORKSPACE" = true ] && [ "$pubspec" = "$ROOT_PUBSPEC" ]; then
+              echo "⏩ Skipping workspace root: $pubspec"
+              continue
+            fi
+            DART_PROJECTS+=("$pubspec")
+          done
 
           for pubspec in "${DART_PROJECTS[@]}"; do
             PROJECT_DIR=$(dirname "$pubspec")
