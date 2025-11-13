@@ -127,15 +127,6 @@ jobs:
           snyk auth "$SNYK_SCANNER_TOKEN"
           echo "✅ Authentication complete."
 
-      - name: 🛠 Resolve workspace dependencies
-        if: steps.detect.outputs.is_dart == 'true' && steps.detect.outputs.is_workspace == 'true'
-        shell: bash
-        run: |
-          echo "📦 Running workspace pub get..."
-          cd ${{ inputs.repo-path }}
-          flutter pub get || dart pub get
-          echo "✅ Workspace dependencies resolved."
-
       - name: 🧪 Generate SBOMs for all Dart/Flutter projects
         if: steps.detect.outputs.is_dart == 'true'
         env:
