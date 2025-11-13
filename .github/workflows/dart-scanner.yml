@@ -55,6 +55,7 @@ jobs:
             echo "📁 Workspace detected at root"
             IS_WORKSPACE=true
           fi
+          echo "is_workspace=$IS_WORKSPACE" >> $GITHUB_OUTPUT
 
           # Discover all pubspec.yaml files
           mapfile -t RAW_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
@@ -84,6 +85,7 @@ jobs:
           echo "📦 Found ${#DART_PROJECTS[@]} project(s):"
           printf '  - %s\n' "${DART_PROJECTS[@]}"
           echo "is_dart=true" >> $GITHUB_OUTPUT
+          echo "is_workspace=$IS_WORKSPACE" >> $GITHUB_OUTPUT
 
       - name: 🧰 Set up Flutter SDK
         if: steps.detect.outputs.is_dart == 'true'
@@ -125,6 +127,15 @@ jobs:
           snyk auth "$SNYK_SCANNER_TOKEN"
           echo "✅ Authentication complete."
 
+      - name: 🛠 Resolve workspace dependencies
+        if: steps.detect.outputs.is_dart == 'true' && steps.detect.outputs.is_workspace == 'true'
+        shell: bash
+        run: |
+          echo "📦 Running workspace pub get..."
+          cd ${{ inputs.repo-path }}
+          flutter pub get || dart pub get
+          echo "✅ Workspace dependencies resolved."
+
       - name: 🧪 Generate SBOMs for all Dart/Flutter projects
         if: steps.detect.outputs.is_dart == 'true'
         env:
@@ -165,7 +176,13 @@ jobs:
 
             echo "📦 Processing: $PROJECT_DIR"
             cd "$PROJECT_DIR"
-            rm -rf .dart_tool pubspec.lock
+
+            # CLEANUP LOGIC (ADD THIS)
+            if [ "$IS_WORKSPACE" = true ]; then
+              echo "ℹ️ Workspace mode — keeping workspace lockfile, not cleaning child .dart_tool or pubspec.lock"
+            else
+              rm -rf .dart_tool pubspec.lock
+            fi
             
             # Dependency resolution logic
             if [ "$IS_WORKSPACE" = true ]; then
@@ -266,6 +283,20 @@ jobs:
 
           LOCAL_POLICY=".snyk"
           GLOBAL_POLICY_PATH=".snyk-global"
+
+          # Detect & log
+          if [ -f "$LOCAL_POLICY" ]; then
+            echo "📘 Local policy found: $LOCAL_POLICY"
+          else
+            echo "📙 No local policy (.snyk) found — continuing"
+          fi
+
+          if [ -f "$GLOBAL_POLICY_PATH" ]; then
+            echo "🌍 Global policy loaded: $GLOBAL_POLICY_PATH"
+          else
+            echo "⚠️ Global policy file missing — using empty ignore list"
+          fi
+
           LOCAL_IGNORES=$(extract_ignores "$LOCAL_POLICY")
           GLOBAL_IGNORES=$(extract_ignores "$GLOBAL_POLICY_PATH")
 
