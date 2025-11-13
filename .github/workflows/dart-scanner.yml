@@ -9,7 +9,7 @@ on:
         default: '.'
         type: string
       flutter-version:
-        description: 'Flutter SDK version (e.g., stable, 3.19.0)'
+        description: 'Flutter SDK version'
         required: false
         default: 'stable'
         type: string
@@ -35,16 +35,19 @@ jobs:
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: 🔍 Detect Dart/Flutter projects
         id: detect
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
         shell: bash
         run: |
           set -ue -o pipefail
-          REPO_PATH="${{ inputs.repo-path }}"
 
           echo "🔍 Searching for Dart/Flutter projects..."
-          mapfile -t DART_PROJECTS < <(find "${REPO_PATH}" -type f -name pubspec.yaml \
+          mapfile -t DART_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
             -not -path "*/build/*" -not -path "*/.git/*" -not -path "*/.pub-cache/*" | sort)
 
           if [ ${#DART_PROJECTS[@]} -eq 0 ]; then
@@ -59,7 +62,7 @@ jobs:
 
       - name: 🧰 Set up Flutter SDK
         if: steps.detect.outputs.is_dart == 'true'
-        uses: flutter-actions/setup-flutter@v3
+        uses: flutter-actions/setup-flutter@6d11b83d56c388d0b6fe865194248a01a48548b5
         with:
           version: ${{ inputs.flutter-version }}
           cache: true
@@ -99,14 +102,15 @@ jobs:
 
       - name: 🧪 Generate SBOMs for all Dart/Flutter projects
         if: steps.detect.outputs.is_dart == 'true'
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
         shell: bash
         run: |
           set -ue -o pipefail
           mkdir -p security-reports
-          REPO_PATH="${{ inputs.repo-path }}"
 
           echo "🔧 Generating SBOMs..."
-          mapfile -t DART_PROJECTS < <(find "${REPO_PATH}" -type f -name pubspec.yaml \
+          mapfile -t DART_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
             -not -path "*/build/*" -not -path "*/.git/*" -not -path "*/.pub-cache/*" | sort)
 
           for pubspec in "${DART_PROJECTS[@]}"; do
