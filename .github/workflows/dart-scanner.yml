@@ -167,18 +167,23 @@ jobs:
             cd "$PROJECT_DIR"
             rm -rf .dart_tool pubspec.lock
             
-            # Try Flutter pub get (Flutter projects)
-            if flutter pub get 2>/dev/null; then
-              echo "📦 Dependencies resolved via Flutter"
+            # Dependency resolution logic
+            if [ "$IS_WORKSPACE" = true ]; then
+              echo "ℹ️ Workspace mode detected — skipping pub get in child packages"
             else
-              echo "⚠️ Flutter pub get failed — continuing with fallback"
-            fi
+              echo "📦 Resolving dependencies..."
+              
+              if flutter pub get 2>/dev/null; then
+                echo "📦 Dependencies resolved via Flutter"
+              else
+                echo "⚠️ Flutter pub get failed — continuing with fallback"
+              fi
 
-            # Try Dart pub get (Dart-only projects)
-            if dart pub get 2>/dev/null; then
-              echo "📦 Dependencies resolved via Dart"
-            else
-              echo "⚠️ Dart pub get failed — continuing without lockfile"
+              if dart pub get 2>/dev/null; then
+                echo "📦 Dependencies resolved via Dart"
+              else
+                echo "⚠️ Dart pub get failed — continuing without lockfile"
+              fi
             fi
 
             echo "🧪 Generating SBOM (CycloneDX 1.4)..."
