@@ -62,7 +62,7 @@ jobs:
 
       - name: 🧰 Set up Flutter SDK
         if: steps.detect.outputs.is_dart == 'true'
-        uses: flutter-actions/setup-flutter@6d11b83d56c388d0b6fe865194248a01a48548b5
+        uses: flutter-actions/setup-flutter@6d11b83d56c388d0b6fe865194248a01a48548b5 # v4.1
         with:
           version: ${{ inputs.flutter-version }}
           cache: true
