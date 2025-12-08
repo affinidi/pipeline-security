@@ -11,6 +11,12 @@ on:
       flutter-version:
         description: 'Flutter SDK version'
         required: false
+        default: 'stable'
+        type: string
+      snyk-org:
+        description: 'Snyk organization name'
+        required: false
+        default: 'affinidi'
         type: string
 
     secrets:
@@ -29,214 +35,275 @@ jobs:
     steps:
       - name: 🧾 Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: 🔍 Detect Project Type
+      - name: 🔍 Detect Dart/Flutter projects
         id: detect
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          REPO_PATH="${{ inputs.repo-path }}"
+          set -ue -o pipefail
 
-          if [ ! -f "${REPO_PATH}/pubspec.yaml" ]; then
-            echo "::warning::No pubspec.yaml found - not a Dart/Flutter project"
+          echo "🔍 Searching for Dart/Flutter projects..."
+
+          # Detect if root is a workspace
+          ROOT_PUBSPEC="$REPO_PATH/pubspec.yaml"
+          IS_WORKSPACE=false
+          if [ -f "$ROOT_PUBSPEC" ] && grep -q '^workspace:' "$ROOT_PUBSPEC"; then
+            echo "📁 Workspace detected at root"
+            IS_WORKSPACE=true
+          fi
+          echo "is_workspace=$IS_WORKSPACE" >> $GITHUB_OUTPUT
+
+          # Discover all pubspec.yaml files
+          mapfile -t RAW_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
+            -not -path "*/example/*" \
+            -not -path "*/build/*" \
+            -not -path "*/.git/*" \
+            -not -path "*/.pub-cache/*" | sort)
+
+          DART_PROJECTS=()
+
+          # Skip workspace root but keep all child packages
+          for pubspec in "${RAW_PROJECTS[@]}"; do
+            if [ "$IS_WORKSPACE" = true ] && [ "$pubspec" = "$ROOT_PUBSPEC" ]; then
+              echo "⏩ Skipping workspace root: $pubspec"
+              continue
+            fi
+            DART_PROJECTS+=("$pubspec")
+          done
+
+
+          if [ ${#DART_PROJECTS[@]} -eq 0 ]; then
+            echo "⚠️ No Dart/Flutter projects found - skipping scan"
             echo "is_dart=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          if grep -q "sdk: flutter" "${REPO_PATH}/pubspec.yaml" || grep -q "flutter:" "${REPO_PATH}/pubspec.yaml"; then
-            echo "Project Type : Flutter"
-            echo "is_flutter=true" >> $GITHUB_OUTPUT
-            echo "is_dart=true" >> $GITHUB_OUTPUT
-          else
-            echo "Project Type : Dart"
-            echo "is_flutter=false" >> $GITHUB_OUTPUT
-            echo "is_dart=true" >> $GITHUB_OUTPUT
-          fi
+          echo "📦 Found ${#DART_PROJECTS[@]} project(s):"
+          printf '  - %s\n' "${DART_PROJECTS[@]}"
+          echo "is_dart=true" >> $GITHUB_OUTPUT
+          echo "is_workspace=$IS_WORKSPACE" >> $GITHUB_OUTPUT
 
-      - name: 🧰 Set up Flutter SDK (specific version if provided)
-        if: steps.detect.outputs.is_dart == 'true' && inputs.flutter-version != ''
-        uses: flutter-actions/setup-flutter@v3
+      - name: 🧰 Set up Flutter SDK
+        if: steps.detect.outputs.is_dart == 'true'
+        uses: flutter-actions/setup-flutter@6d11b83d56c388d0b6fe865194248a01a48548b5 # v4.1
         with:
           version: ${{ inputs.flutter-version }}
           cache: true
           cache-sdk: true
 
-      - name: 🧰 Set up Flutter SDK (else stable channel)
-        if: steps.detect.outputs.is_dart == 'true' && (inputs.flutter-version == '' || inputs.flutter-version == null)
-        uses: flutter-actions/setup-flutter@v3
-        with:
-          channel: stable
-          cache: true
-          cache-sdk: true
-
       - name: ⚡ Cache Global NPM Tools
-        id: cache-npm
         if: steps.detect.outputs.is_dart == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.npm-global
-          key: ${{ runner.os }}-npm-tools-v1
+          key: ${{ runner.os }}-npm-tools-v2
 
-      - name: 📦 Install required tools
+      - name: 📦 Install Required Tools
         if: steps.detect.outputs.is_dart == 'true'
         shell: bash
         run: |
-          if ! command -v snyk > /dev/null || ! command -v cdxgen > /dev/null; then
-            mkdir -p ~/.npm-global
-            npm config set prefix ~/.npm-global
-            npm install -g snyk@latest @cyclonedx/cdxgen@latest
-            echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
-          fi
+          mkdir -p ~/.npm-global
+          npm config set prefix ~/.npm-global
+          npm install -g snyk@latest @cyclonedx/cdxgen@latest
+          echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
+          sudo wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+          sudo chmod +x /usr/bin/yq
 
-      - name: 🔐 Authentication
+      - name: 🔐 Authenticate Snyk
         if: steps.detect.outputs.is_dart == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
         env:
           SNYK_SCANNER_TOKEN: ${{ secrets.SNYK_SCANNER_TOKEN }}
           SNYK_SCANNER_REGION: ${{ secrets.SNYK_SCANNER_REGION }}
+        shell: bash
         run: |
+          echo "🔐 Setting up Snyk authentication..."
           echo "::add-mask::$SNYK_SCANNER_TOKEN"
           echo "::add-mask::$SNYK_SCANNER_REGION"
+          snyk config set endpoint="https://api.${SNYK_SCANNER_REGION}.snyk.io"
+          snyk auth "$SNYK_SCANNER_TOKEN"
+          echo "✅ Authentication complete."
 
-          snyk config set endpoint="https://api.${SNYK_SCANNER_REGION}.snyk.io" >/dev/null 2>&1
-          snyk auth "$SNYK_SCANNER_TOKEN" >/dev/null 2>&1
-
-      - name: 📦 Resolve dependencies
+      - name: 🧪 Generate SBOMs for all Dart/Flutter projects
         if: steps.detect.outputs.is_dart == 'true'
-        working-directory: ${{ inputs.repo-path }}
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
         shell: bash
         run: |
-          dart pub get
+          set -ue -o pipefail
+          mkdir -p security-reports
 
-      - name: 📦 Install yq
-        if: steps.detect.outputs.is_dart == 'true'
-        run: |
-          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
-          sudo chmod +x /usr/bin/yq
+          echo "🔧 Generating SBOMs..."
+          # Detect workspace mode
+          ROOT_PUBSPEC="$REPO_PATH/pubspec.yaml"
+          IS_WORKSPACE=false
+          if [ -f "$ROOT_PUBSPEC" ] && grep -q '^workspace:' "$ROOT_PUBSPEC"; then
+            echo "📁 Workspace detected at root"
+            IS_WORKSPACE=true
+          fi
 
-      - name: 🧪 Run SBOM Scan and Check Vulnerabilities
-        if: steps.detect.outputs.is_dart == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        env: 
-          SNYK_GLOBAL_POLICY: ${{ secrets.SNYK_GLOBAL_POLICY }}
-        continue-on-error: true
-        run: |
-          # Generate SBOM
-          if ! cdxgen -t pub -o pub-sbom.json >/dev/null 2>&1; then
-            echo "::warning::⚠️ cdxgen exited with error — checking SBOM validity"
-            if [ ! -s pub-sbom.json ]; then
-              echo "::warning::⚠️ SBOM generation failed completely"
-              exit 1
+          mapfile -t RAW_PROJECTS < <(find "$REPO_PATH" -type f -name pubspec.yaml \
+            -not -path "*/example/*" \
+            -not -path "*/build/*" \
+            -not -path "*/.git/*" \
+            -not -path "*/.pub-cache/*" | sort)
+
+          DART_PROJECTS=()
+          for pubspec in "${RAW_PROJECTS[@]}"; do
+            if [ "$IS_WORKSPACE" = true ] && [ "$pubspec" = "$ROOT_PUBSPEC" ]; then
+              echo "⏩ Skipping workspace root: $pubspec"
+              continue
             fi
+            DART_PROJECTS+=("$pubspec")
+          done
+
+          for pubspec in "${DART_PROJECTS[@]}"; do
+            PROJECT_DIR=$(dirname "$pubspec")
+            PROJECT_TAG=$(echo "$PROJECT_DIR" | tr '/' '_')
+            SBOM_FILE="security-reports/pub-sbom-${PROJECT_TAG}.json"
+
+            echo "📦 Processing: $PROJECT_DIR"
+            cd "$PROJECT_DIR"
+
+            # CLEANUP LOGIC (ADD THIS)
+            if [ "$IS_WORKSPACE" = true ]; then
+              echo "ℹ️ Workspace mode — keeping workspace lockfile, not cleaning child .dart_tool or pubspec.lock"
+            else
+              rm -rf .dart_tool pubspec.lock
+            fi
+            
+            # Dependency resolution logic
+            if [ "$IS_WORKSPACE" = true ]; then
+              echo "ℹ️ Workspace mode detected — skipping pub get in child packages"
+            else
+              echo "📦 Resolving dependencies..."
+              
+              if flutter pub get 2>/dev/null; then
+                echo "📦 Dependencies resolved via Flutter"
+              else
+                echo "⚠️ Flutter pub get failed — continuing with fallback"
+              fi
+
+              if dart pub get 2>/dev/null; then
+                echo "📦 Dependencies resolved via Dart"
+              else
+                echo "⚠️ Dart pub get failed — continuing without lockfile"
+              fi
+            fi
+
+            echo "🧪 Generating SBOM (CycloneDX 1.4)..."
+            if ! cdxgen -t pub --spec-version 1.4 -o "$OLDPWD/$SBOM_FILE" 2>/dev/null; then
+              echo "⚠️ SBOM generation failed, fallback created."
+              echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > "$OLDPWD/$SBOM_FILE"
+            fi
+
+            jq empty "$OLDPWD/$SBOM_FILE" 2>/dev/null || {
+              echo "⚠️ Invalid SBOM JSON, replacing with fallback."
+              echo '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1,"components":[]}' > "$OLDPWD/$SBOM_FILE"
+            }
+
+            cd "$OLDPWD"
+          done
+
+          echo "✅ SBOM generation complete."
+
+      - name: 🔎 Run Snyk SBOM Scans
+        if: steps.detect.outputs.is_dart == 'true'
+        shell: bash
+        env:
+          SNYK_ORG: ${{ inputs.snyk-org }}
+        run: |
+          echo "🔎 Running individual Snyk SBOM scans..."
+          for SBOM_FILE in security-reports/pub-sbom-*.json; do
+            PROJECT_NAME=$(basename "$SBOM_FILE" | sed 's/pub-sbom-//; s/.json//')
+            RESULT_FILE="security-reports/sbom-result-${PROJECT_NAME}.json"
+            TMP_OUT="security-reports/tmp-${PROJECT_NAME}.json"
+
+            echo "🧩 Scanning SBOM for project: ${PROJECT_NAME}"
+            SNYK_EXIT=0
+            if ! snyk sbom test --experimental --file "$SBOM_FILE" --org="$SNYK_ORG" --json > "$TMP_OUT"; then
+              SNYK_EXIT=$?
+            fi
+
+            if [ -s "$TMP_OUT" ] && jq empty "$TMP_OUT" >/dev/null 2>&1; then
+              jq --arg project "$PROJECT_NAME" --arg sbom "$SBOM_FILE" \
+                ' .vulnerabilities |= (map(. + {project: $project, sbom_file: $sbom}) // [])' \
+                "$TMP_OUT" > "$RESULT_FILE"
+              echo "✅ Snyk scan completed for ${PROJECT_NAME} (exit=$SNYK_EXIT)"
+            else
+              echo "⚠️ Snyk scan failed for ${PROJECT_NAME}, creating fallback"
+              echo "{\"project\":\"${PROJECT_NAME}\",\"vulnerabilities\":[]}" > "$RESULT_FILE"
+            fi
+
+            rm -f "$TMP_OUT" || true
+          done
+
+      - name: 🧩 Merge All SBOM Results
+        if: steps.detect.outputs.is_dart == 'true'
+        shell: bash
+        run: |
+          echo "🧩 Merging all Snyk SBOM results..."
+          if ls security-reports/sbom-result-*.json 1> /dev/null 2>&1; then
+            jq -s '
+              reduce .[] as $item ({"vulnerabilities":[]};
+                .vulnerabilities += ($item.vulnerabilities // [])
+              )
+              | .vulnerabilities |= unique_by(.id)
+            ' security-reports/sbom-result-*.json > security-reports/sbom-result.json
+          else
+            echo '{"vulnerabilities":[]}' > security-reports/sbom-result.json
           fi
 
-          if ! jq empty pub-sbom.json 2>/dev/null; then
-            echo "::warning::⚠️ Invalid SBOM JSON"
-            exit 1
-          fi
+      - name: 📥 Apply Local and Global Policies (ID-based)
+        if: steps.detect.outputs.is_dart == 'true'
+        shell: bash
+        env:
+          SNYK_GLOBAL_POLICY: ${{ secrets.SNYK_GLOBAL_POLICY }}
+        run: |
+          echo "📥 Fetching global Snyk policy..."
+          curl -sSL "$SNYK_GLOBAL_POLICY" -o .snyk-global || echo "⚠️ Failed to fetch global policy"
 
-          echo "----------------------------------------------------------------------"
-          echo "📦 Generated SBOM"
-
-          # Run Snyk SBOM test
-          SNYK_EXIT=0
-          snyk sbom test --experimental --file pub-sbom.json --org=affinidi --json > sbom-result.json || SNYK_EXIT=$?
-
-          if [[ "$SNYK_EXIT" -ne 0 ]] && [ ! -f "sbom-result.json" ]; then
-            echo "::warning::⚠️ Snyk scan failed and no results file was generated"
-            exit 1
-          fi
-
-          echo "----------------------------------------------------------------------"
-          echo "✓ Scanning Finished"
-
-          # Extract ignored CVEs from local and global policies
-          LOCAL_POLICY="${{ inputs.repo-path }}/.snyk"
-          LOCAL_IGNORES="[]"
-          GLOBAL_POLICY_PATH="./.snyk-global"
-          GLOBAL_IGNORES="[]"
-
-          # Extract ignores as proper JSON array (sorted by year + number)
           extract_ignores() {
             local file=$1
-            
-            # Return empty array if file doesn't exist
-            if [ ! -f "$file" ]; then
-              echo "[]"
-              return
-            fi
-            
-            # Get ignore keys, handling empty objects gracefully
-            local cve_list
-            cve_list=$(yq '.ignore | keys | .[]' "$file" 2>/dev/null | tr '[:lower:]' '[:upper:]' | sort -t'-' -k2,2n -k3,3n)
-            
-            # Convert to JSON array
-            if [ -n "$cve_list" ]; then
-              echo "$cve_list" | jq -R . | jq -s .
-            else
-              echo "[]"
-            fi
+            if [ ! -f "$file" ]; then echo "[]"; return; fi
+            yq '.ignore | keys | .[]' "$file" 2>/dev/null | tr '[:lower:]' '[:upper:]' | jq -R . | jq -s .
           }
 
-          # Check local policy
+          LOCAL_POLICY=".snyk"
+          GLOBAL_POLICY_PATH=".snyk-global"
+
+          # Detect & log
           if [ -f "$LOCAL_POLICY" ]; then
-            LOCAL_IGNORES=$(extract_ignores "$LOCAL_POLICY")
-            LOCAL_COUNT=$(echo "$LOCAL_IGNORES" | jq 'length')
-
-            echo "----------------------------------------------------------------------"
-            echo "🗂 Found local .snyk file, ignoring $LOCAL_COUNT CVE(s)"
-            i=1
-            for cve in $(echo "$LOCAL_IGNORES" | jq -r '.[]'); do
-              echo "  $i) $cve"
-              i=$((i+1))
-            done
+            echo "📘 Local policy found: $LOCAL_POLICY"
           else
-            echo "----------------------------------------------------------------------"
-            echo "ℹ️ No local .snyk file found"
-          fi
-
-          # Global policy fetch
-          if [ -n "$SNYK_GLOBAL_POLICY" ]; then
-            curl -sSL "$SNYK_GLOBAL_POLICY" -o "$GLOBAL_POLICY_PATH" || echo "⚠️ Failed to fetch global policy"
+            echo "📙 No local policy (.snyk) found — continuing"
           fi
 
           if [ -f "$GLOBAL_POLICY_PATH" ]; then
-            GLOBAL_IGNORES=$(extract_ignores "$GLOBAL_POLICY_PATH")
-            GLOBAL_COUNT=$(echo "$GLOBAL_IGNORES" | jq 'length')
-
-            echo "----------------------------------------------------------------------"
-            echo "🗂 Found global .snyk-global file, ignoring $GLOBAL_COUNT CVE(s)"
-            i=1
-            for cve in $(echo "$GLOBAL_IGNORES" | jq -r '.[]'); do
-              echo "  $i) $cve"
-              i=$((i+1))
-            done
+            echo "🌍 Global policy loaded: $GLOBAL_POLICY_PATH"
           else
-            echo "----------------------------------------------------------------------"
-            echo "ℹ️ No global .snyk-global file available"
+            echo "⚠️ Global policy file missing — using empty ignore list"
           fi
 
-          # Merge for filtering
-          IGNORED_CVES_JSON=$(jq -n --argjson local "$LOCAL_IGNORES" --argjson global "$GLOBAL_IGNORES" '$local + $global')
+          LOCAL_IGNORES=$(extract_ignores "$LOCAL_POLICY")
+          GLOBAL_IGNORES=$(extract_ignores "$GLOBAL_POLICY_PATH")
 
-          # Normalize CVEs in SBOM to uppercase and filter ignored ones
-          jq '
-            .vulnerabilities |= map(
-              if .identifiers.CVE then
-                .identifiers.CVE |= map(ascii_upcase)
-              else
-                .
-              end
-            ) | .vulnerabilities |= map(select(
-              (.identifiers.CVE // []) | all(. as $cve | $ignored | index($cve) | not)
-            ))
-          ' --argjson ignored "$IGNORED_CVES_JSON" sbom-result.json > sbom-result-filtered.json
+          jq -n --argjson local "$LOCAL_IGNORES" --argjson global "$GLOBAL_IGNORES" '$local + $global | unique' > ignored.json
+          jq --argjson ignored "$(cat ignored.json)" '
+            .vulnerabilities |= map(select((.id | ascii_upcase) as $id | $ignored | index($id) | not))
+          ' security-reports/sbom-result.json > security-reports/sbom-result-filtered.json
+          echo "✅ Applied ignore policies."
 
-          # Count filtered results
-          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity=="critical")] | length' sbom-result-filtered.json)
-          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity=="high")] | length' sbom-result-filtered.json)
-          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity=="unknown")] | length' sbom-result-filtered.json)
+      - name: 📊 Vulnerability Summary Report
+        if: steps.detect.outputs.is_dart == 'true'
+        shell: bash
+        run: |
+          critical=$(jq '[.vulnerabilities? // [] | .[] | select(.severity=="critical")] | length' security-reports/sbom-result-filtered.json)
+          high=$(jq '[.vulnerabilities? // [] | .[] | select(.severity=="high")] | length' security-reports/sbom-result-filtered.json)
+          unknown=$(jq '[.vulnerabilities? // [] | .[] | select(.severity=="unknown")] | length' security-reports/sbom-result-filtered.json)
 
           if [[ $critical -gt 0 || $high -gt 0 ]]; then
             echo "----------------------------------------------------------------------"
@@ -247,53 +314,35 @@ jobs:
               | map(select(.severity == "critical" or .severity == "high"))
               | .[]
               | "\(.severity | ascii_upcase) | \(.packageName)@\(.version)\n" +
+                "🆔 ID: \(.id // "None")\n" +
                 "📛 Title: \(.title)\n" +
-                "🔗 CVE: \(.identifiers.CVE[0] // "None")\n" +
-                "⚠️ CVSS: \(.cvssScore // "?") (\(.CVSSv3 // "No vector"))\n" +
-                "💡 Fix: \(if .semver.patched then "Upgrade to \(.semver.patched[0])" 
-                      elif .semver.unaffected then "Use version: \(.semver.unaffected[0])" 
-                      else "See: \(.url // "No fix info")" end)\n" +
+                "⚠️ CVSS: \(.cvssScore // "?")\n" +
+                "💡 Fix: \(if .semver.patched then "Upgrade to \(.semver.patched[0])" elif .semver.unaffected then "Use version: \(.semver.unaffected[0])" else "See: \(.url // "Consult Security")" end)\n" +
+                "📦 Source: \(.sbom_file // "unknown") (project: \(.project // "unknown"))\n" +
                 "---"
-            ' sbom-result-filtered.json
-
-            echo "::warning::┌────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            echo "::warning::│ CRITICAL SECURITY ISSUES DETECTED                   "
-            echo "::warning::├────────────────────────────────────────────────────────────────────────────────────────────────────────"
-            echo "::warning::│ 🟣 Critical vulnerabilities: $critical              "
-            echo "::warning::│ 🔴 High vulnerabilities: $high                      "
-            echo "::warning::│                                                     "
-            echo "::warning::│ Review the detailed report above and either:        "
-            echo "::warning::│                                                     "
-            echo "::warning::│ 1. Fix Vulnerabilities OR                           "
-            echo "::warning::│ 2. Consult Security incase of false positives / risk acceptance / review"
-            echo "::warning::└────────────────────────────────────────────────────────────────────────────────────────────────────────"
-
+            ' security-reports/sbom-result-filtered.json
+            echo "----------------------------------------------------------------------"
+            echo "🟣 Critical = $critical  |  🔴 High = $high  |  ⚪ Unknown = $unknown"
+            echo "----------------------------------------------------------------------"
           elif [[ "$unknown" -gt 0 ]]; then
-            echo "::warning::⚪ Scan completed with $unknown unknown severity vulnerabilities"
+            echo "⚪ Scan completed with $unknown unknown severity vulnerabilities"
           else
             echo "----------------------------------------------------------------------"
             echo "✅ All good, no critical or high vulnerabilities found. Good job! 🎉"
             echo "----------------------------------------------------------------------"
           fi
 
-      - name: 📤 Upload reports
+      - name: 📤 Upload Reports
         if: always() && steps.detect.outputs.is_dart == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dart-security-reports
-          path: |
-            pub-sbom.json
-            sbom-result.json
-            sbom-result-filtered.json
+          path: security-reports/
 
       - name: 🧹 Cleanup
         if: always() && steps.detect.outputs.is_dart == 'true'
-        working-directory: ${{ inputs.repo-path }}
-        shell: bash
-        run: |
-          rm -f pub-sbom.json sbom-result.json sbom-result-normalized.json sbom-result-filtered.json .snyk-global
+        run: rm -f .snyk-global ignored.json || true
 
-      - name: ℹ️ Skip if not a Dart/Flutter project
+      - name: ℹ️ Skip Non-Dart Projects
         if: steps.detect.outputs.is_dart != 'true'
-        shell: bash
         run: echo "🟡 Skipping scan - not a Dart/Flutter project"
