@@ -95,10 +95,10 @@ jobs:
         if: steps.detect.outputs.is_rust == 'true'
         run: |
           if ! command -v cargo-sbom >/dev/null 2>&1; then
-            cargo install cargo-sbom
+            cargo install cargo-sbom --locked
           fi
           if ! command -v cargo-audit >/dev/null 2>&1; then
-            cargo install cargo-audit
+            cargo install cargo-audit --locked
           fi
 
       - name: 📦 Install required tools
