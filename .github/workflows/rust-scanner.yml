@@ -420,7 +420,30 @@ jobs:
       - name: 📊 Report
         if: steps.detect.outputs.is_rust == 'true'
         shell: bash
+        env:
+          # Passed via env (not inline ${{ }} in the script) so a crafted branch name
+          # can't inject shell — standard hardening for untrusted context values.
+          SCAN_SHA: ${{ github.sha }}
+          SCAN_REF: ${{ github.ref_name }}
+          SCAN_REPO: ${{ github.repository }}
+          SCAN_EVENT: ${{ github.event_name }}
+          SCAN_PATH: ${{ inputs.repo-path }}
+          SCAN_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # ── Scan context / provenance (commit-SHA, branch, run) ──
+          echo "----------------------------------------------------------------------"
+          echo "  Scan context"
+          echo "    Repo   : ${SCAN_REPO}"
+          echo "    Commit : ${SCAN_SHA}"
+          echo "    Branch : ${SCAN_REF}  (trigger: ${SCAN_EVENT})"
+          echo "    Path   : ${SCAN_PATH}"
+          echo "    Run    : ${SCAN_RUN_URL}"
+          echo "----------------------------------------------------------------------"
+          mkdir -p security-reports
+          printf 'repo: %s\ncommit: %s\nbranch: %s\ntrigger: %s\npath: %s\nrun: %s\n' \
+            "${SCAN_REPO}" "${SCAN_SHA}" "${SCAN_REF}" "${SCAN_EVENT}" "${SCAN_PATH}" "${SCAN_RUN_URL}" \
+            > security-reports/scan-context.txt
+
           # Count vulnerabilities by severity
           audit_unknown=$(jq '[.sca.cargo_audit[]? | select(.severity=="unknown")] | length' combined-result.json)
           snyk_critical=$(jq '[.sca.snyk_sbom[]? | select(.severity=="critical")] | length' combined-result.json)
