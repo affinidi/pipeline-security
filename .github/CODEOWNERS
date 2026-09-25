@@ -1,0 +1,19 @@
+# Security owns this repository.
+#
+# pipeline-security holds the scanners that run in other repos' workflow stages,
+# so a change here lands in every consuming pipeline.
+#
+# NOTE: this file is advisory unless branch protection on `main` has
+# "Require review from Code Owners" enabled with at least one required approval.
+
+# Default owner for everything.
+*                     @tupi1337 @roland-gh-aff @lokeshxc @yilmazlarmurat @vikramvashisthaff
+
+# The scanners themselves.
+/.github/workflows/   @tupi1337 @roland-gh-aff @lokeshxc @yilmazlarmurat @vikramvashisthaff
+
+# Global Snyk policy: ignores and expiries change what every scan reports.
+/.snyk-global         @tupi1337 @roland-gh-aff @lokeshxc @yilmazlarmurat @vikramvashisthaff
+
+# Ownership itself: changing this file needs security sign-off.
+/.github/CODEOWNERS   @tupi1337 @roland-gh-aff @lokeshxc @yilmazlarmurat @vikramvashisthaff
